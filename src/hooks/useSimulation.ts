@@ -7,7 +7,7 @@ type Pair = ReturnType<typeof createComparison>
 type Previous = { fixed: SimulationSnapshot; optimized: SimulationSnapshot } | null
 
 export function useSimulation() {
-  const [initial] = useState(() => createComparison(createScenario('rush', 42)))
+  const [initial] = useState(() => createComparison(createScenario('city', 42)))
   const pair = useRef<Pair>(initial)
   const [comparison, setComparison] = useState<ComparisonSnapshot>(() => snapshotComparison(initial))
   const current = useRef(comparison)
@@ -15,7 +15,7 @@ export function useSimulation() {
   const [interpolation, setInterpolation] = useState(1)
   const [playing, setPlaying] = useState(false)
   const [speed, setPlaybackSpeed] = useState(10)
-  const [scenarioId, setScenarioId] = useState<ScenarioId>('rush')
+  const [scenarioId, setScenarioId] = useState<ScenarioId>('city')
   const [seed, setSeedValue] = useState(42)
   const remainder = useRef(0)
 

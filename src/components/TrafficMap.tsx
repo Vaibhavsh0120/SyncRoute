@@ -7,7 +7,6 @@ import { cellToBoundary, polygonToCells } from 'h3-js'
 import type { FeatureCollection, Geometry } from 'geojson'
 import type { CameraState, Coordinate, RoutePreview, Selection, SimulationSnapshot } from '../domain/types'
 import { coordinateAt, NETWORK, networkGeometry } from '../data/network'
-import { DISPLAY_ZONE_IDS, displayZoneStats } from '../lib/zones'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import './TrafficMap.css'
 
@@ -33,25 +32,13 @@ export interface TrafficMapProps {
 const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] }
 const EDGE_BY_ID = new Map(NETWORK.edges.map(edge => [edge.id, edge]))
 const CAR_COLORS = ['#edf3f6', '#d65b57', '#efbd3f', '#3e8abb', '#38a8ad', '#435166']
-const THREE_D_LAYERS = ['buildings-shadow', 'buildings-3d', 'building-facades', 'building-roofs', 'scenery-shadow', 'tree-trunks', 'tree-crowns', 'roof-details', 'road-markings']
+const THREE_D_LAYERS = ['buildings-shadow', 'buildings-3d', 'building-facades', 'building-roofs', 'scenery-shadow', 'tree-trunks', 'tree-crowns', 'roof-details', 'road-markings', 'park-landscape-3d', 'hex-3d']
 const [SW, NE] = NETWORK.bounds
 const CELLS = polygonToCells([[SW[1], SW[0]], [SW[1], NE[0]], [NE[1], NE[0]], [NE[1], SW[0]], [SW[1], SW[0]]], 10)
 const GRID = CELLS.map(id => ({
   id,
   coordinates: cellToBoundary(id, true) as Coordinate[],
 }))
-const ZONE_GEOMETRY = DISPLAY_ZONE_IDS.flatMap(id => {
-  const outer = cellToBoundary(id, true) as Coordinate[]
-  const unique = outer.slice(0, -1)
-  const center: Coordinate = [unique.reduce((sum, p) => sum + p[0], 0) / unique.length, unique.reduce((sum, p) => sum + p[1], 0) / unique.length]
-  const inner = outer.map(p => [center[0] + (p[0] - center[0]) * .994, center[1] + (p[1] - center[1]) * .994] as Coordinate).reverse()
-  return [
-    { id, kind: 'floor', coordinates: [outer] },
-    { id, kind: 'wall', coordinates: [outer, inner] },
-    ...unique.map(p => ({ id, kind: 'corner', coordinates: [[[p[0] - .000016, p[1] - .000014], [p[0] + .000016, p[1] - .000014], [p[0] + .000016, p[1] + .000014], [p[0] - .000016, p[1] + .000014], [p[0] - .000016, p[1] - .000014]]] })),
-  ]
-})
-const ZONE_COLOR: ExpressionSpecification = ['match', ['get', 'category'], 'red', '#ef6671', 'yellow', '#eab548', '#46b99a']
 const roadWidth = (major: number, minor: number): ExpressionSpecification => ['interpolate', ['exponential', 2], ['zoom'], 14, ['match', ['get', 'highway'], ['primary', 'secondary', 'tertiary'], major / 4, minor / 4], 16, ['match', ['get', 'highway'], ['primary', 'secondary', 'tertiary'], major, minor], 18, ['match', ['get', 'highway'], ['primary', 'secondary', 'tertiary'], major * 4, minor * 4]]
 const LABELS: { label: string; coordinate: Coordinate; park?: boolean }[] = [
   { label: 'CENTRAL PARK', coordinate: [77.21967, 28.6328], park: true },
@@ -74,11 +61,6 @@ function hexData(snapshot: SimulationSnapshot): FeatureCollection {
       return { type: 'Feature', properties: { id: cell.id, category: stat?.category ?? 'empty', count: stat?.count ?? 0 }, geometry: { type: 'Polygon', coordinates: [cell.coordinates] } }
     }),
   }
-}
-
-function zoneData(snapshot: SimulationSnapshot): FeatureCollection {
-  const stats = new Map(displayZoneStats(snapshot).map(stat => [stat.id, stat]))
-  return { type: 'FeatureCollection', features: ZONE_GEOMETRY.map(zone => ({ type: 'Feature', properties: { id: zone.id, kind: zone.kind, category: stats.get(zone.id)?.category ?? 'green' }, geometry: { type: 'Polygon', coordinates: zone.coordinates } })) }
 }
 
 function activeRoutes(snapshot: SimulationSnapshot): FeatureCollection {
@@ -283,26 +265,40 @@ const LAST_MAP_STATE = new WeakMap<LibreMap, TrafficMapProps>()
 function updateMap(map: LibreMap, props: TrafficMapProps, reducedMotion: boolean) {
   const previous = LAST_MAP_STATE.get(map)
   if (previous?.snapshot !== props.snapshot) {
-    setSource(map, props.viewMode === '3d' ? 'zones' : 'hexagons', props.viewMode === '3d' ? zoneData(props.snapshot) : hexData(props.snapshot))
+    setSource(map, 'hexagons', hexData(props.snapshot))
     setSource(map, 'congestion', {
-    type: 'FeatureCollection',
-    features: props.snapshot.edges.map(stat => ({ type: 'Feature', properties: { category: stat.category, blocked: stat.blocked }, geometry: { type: 'LineString', coordinates: EDGE_BY_ID.get(stat.id)?.coordinates ?? [] } })),
+      type: 'FeatureCollection',
+      features: props.snapshot.edges.map(stat => ({ type: 'Feature', properties: { category: stat.category, blocked: stat.blocked }, geometry: { type: 'LineString', coordinates: EDGE_BY_ID.get(stat.id)?.coordinates ?? [] } })),
     })
   }
   if (previous?.snapshot !== props.snapshot || previous?.previousSnapshot !== props.previousSnapshot || (!reducedMotion && previous?.interpolation !== props.interpolation)) setSource(map, 'vehicles', vehicleData(props, reducedMotion))
-  if (!previous || previous.snapshot !== props.snapshot || previous.showRoutes !== props.showRoutes) setSource(map, 'route', props.showRoutes ? activeRoutes(props.snapshot) : EMPTY)
+  if (!previous || previous.snapshot !== props.snapshot || previous.showRoutes !== props.showRoutes || previous.route !== props.route) {
+    const routeFeatures: GeoJSON.Feature[] = []
+    if (props.route?.coordinates?.length) {
+      routeFeatures.push({ type: 'Feature', properties: { id: 'active-route' }, geometry: { type: 'LineString', coordinates: props.route.coordinates } })
+    } else if (props.showRoutes) {
+      routeFeatures.push(...activeRoutes(props.snapshot).features)
+    }
+    setSource(map, 'route', { type: 'FeatureCollection', features: routeFeatures })
+  }
   if (previous?.showHexagons !== props.showHexagons || previous.viewMode !== props.viewMode) {
-    for (const id of ['hex-fill', 'hex-outline']) map.setLayoutProperty(id, 'visibility', props.showHexagons && props.viewMode === '2d' ? 'visible' : 'none')
-    for (const id of ['zone-floor', 'zone-walls', 'zone-top']) map.setLayoutProperty(id, 'visibility', props.showHexagons && props.viewMode === '3d' ? 'visible' : 'none')
+    const hexVis = props.showHexagons ? 'visible' : 'none'
+    for (const id of ['hex-fill', 'hex-outline']) {
+      if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', hexVis)
+    }
+    if (map.getLayer('hex-3d')) map.setLayoutProperty('hex-3d', 'visibility', props.showHexagons && props.viewMode === '3d' ? 'visible' : 'none')
   }
   if (previous?.viewMode !== props.viewMode) {
-    for (const id of THREE_D_LAYERS) map.setLayoutProperty(id, 'visibility', props.viewMode === '3d' ? 'visible' : 'none')
-    map.setLayoutProperty('tree-canopy-2d', 'visibility', props.viewMode === '2d' ? 'visible' : 'none')
+    for (const id of THREE_D_LAYERS) {
+      if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', props.viewMode === '3d' ? 'visible' : 'none')
+    }
+    if (map.getLayer('tree-canopy-2d')) map.setLayoutProperty('tree-canopy-2d', 'visibility', props.viewMode === '2d' ? 'visible' : 'none')
+    if (map.getLayer('park-landscape-2d')) map.setLayoutProperty('park-landscape-2d', 'visibility', props.viewMode === '2d' ? 'visible' : 'none')
     map.setPaintProperty('background', 'background-color', props.viewMode === '3d' ? '#e9e9de' : '#f0f3f7')
-    map.setPaintProperty('parks', 'fill-color', props.viewMode === '3d' ? '#b7d09e' : '#d5e8d8')
+    map.setPaintProperty('parks', 'fill-color', props.viewMode === '3d' ? '#4d9359' : '#d5e8d8')
     map.setPaintProperty('roads', 'line-color', props.viewMode === '3d' ? '#798588' : '#fff')
     map.setPaintProperty('roads-casing', 'line-color', props.viewMode === '3d' ? '#c7c9bd' : '#d3dbe5')
-    map.setPaintProperty('congestion-line', 'line-opacity', props.viewMode === '3d' ? .32 : .7)
+    map.setPaintProperty('congestion-line', 'line-opacity', props.viewMode === '3d' ? .45 : .7)
   }
   if (previous?.snapshot.mode !== props.snapshot.mode) map.setPaintProperty('route-line', 'line-color', props.snapshot.mode === 'fixed' ? '#08a9d1' : '#7652dc')
   LAST_MAP_STATE.set(map, props)
@@ -368,20 +364,20 @@ export function TrafficMap(props: TrafficMapProps) {
             { id: 'road-markings', type: 'line', source: 'network', layout: { visibility: 'none' }, paint: { 'line-color': '#fff7dd', 'line-width': 1, 'line-dasharray': [2, 5], 'line-opacity': .65 } },
             { id: 'scenery-shadow', type: 'fill', source: 'scenery', filter: ['==', ['get', 'kind'], 'tree-crown'], layout: { visibility: 'none' }, paint: { 'fill-color': '#2d4938', 'fill-opacity': .11, 'fill-translate': [4, 5], 'fill-translate-anchor': 'map' } },
             { id: 'tree-canopy-2d', type: 'fill', source: 'scenery', filter: ['==', ['get', 'kind'], 'tree-crown'], paint: { 'fill-color': ['get', 'color'], 'fill-opacity': .52 } },
+            { id: 'park-landscape-2d', type: 'fill', source: 'scenery', filter: ['in', ['get', 'kind'], ['literal', ['park-lawn', 'park-path', 'water-feature', 'park-amphitheater']]], paint: { 'fill-color': ['get', 'color'], 'fill-opacity': .7 } },
             { id: 'hex-fill', type: 'fill', source: 'hexagons', paint: { 'fill-color': ['match', ['get', 'category'], 'red', '#eb5961', 'yellow', '#f2bc46', 'green', '#37bb8c', '#94b5d4'], 'fill-opacity': ['match', ['get', 'category'], 'empty', .025, 'green', .10, .32] } },
             { id: 'hex-outline', type: 'line', source: 'hexagons', paint: { 'line-color': '#708eaf', 'line-width': .7, 'line-opacity': .25 } },
-            { id: 'zone-floor', type: 'fill', source: 'zones', filter: ['==', ['get', 'kind'], 'floor'], layout: { visibility: 'none' }, paint: { 'fill-color': ZONE_COLOR, 'fill-opacity': .045 } },
+            { id: 'hex-3d', type: 'fill-extrusion', source: 'hexagons', filter: ['!=', ['get', 'category'], 'empty'], layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['match', ['get', 'category'], 'red', '#eb5961', 'yellow', '#f2bc46', 'green', '#37bb8c', '#94b5d4'], 'fill-extrusion-height': ['match', ['get', 'category'], 'red', 16, 'yellow', 9, 'green', 4, 1], 'fill-extrusion-base': 0, 'fill-extrusion-opacity': .28, 'fill-extrusion-vertical-gradient': true } },
             { id: 'network-line', type: 'line', source: 'network', paint: { 'line-color': '#91a5bd', 'line-width': 2, 'line-opacity': .5 } },
             { id: 'congestion-line', type: 'line', source: 'congestion', paint: { 'line-color': ['match', ['get', 'category'], 'red', '#e35a62', 'yellow', '#e3ab31', '#40aa87'], 'line-width': ['case', ['get', 'blocked'], 6, 3], 'line-opacity': .7 } },
             { id: 'route-halo', type: 'line', source: 'route', paint: { 'line-color': '#fff', 'line-width': 9, 'line-opacity': .9 } },
             { id: 'route-line', type: 'line', source: 'route', paint: { 'line-color': '#7652dc', 'line-width': 5, 'line-opacity': .95 } },
+            { id: 'park-landscape-3d', type: 'fill-extrusion', source: 'scenery', filter: ['in', ['get', 'kind'], ['literal', ['park-lawn', 'park-path', 'water-feature', 'park-plinth', 'park-amphitheater', 'flagpole-plinth', 'flagpole', 'flagpole-finial', 'flag-saffron', 'flag-white', 'flag-chakra', 'flag-green']]], layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['get', 'color'], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-opacity': 1, 'fill-extrusion-vertical-gradient': false } },
             { id: 'buildings-3d', type: 'fill-extrusion', source: 'buildings', layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['coalesce', ['get', 'facadeColor'], '#e5d8bf'], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': 0, 'fill-extrusion-opacity': 1, 'fill-extrusion-vertical-gradient': true } },
             { id: 'building-roofs', type: 'fill-extrusion', source: 'buildings', layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['coalesce', ['get', 'roofColor'], '#b8bab4'], 'fill-extrusion-height': ['+', ['get', 'height'], .4], 'fill-extrusion-base': ['get', 'height'], 'fill-extrusion-opacity': 1, 'fill-extrusion-vertical-gradient': false } },
             { id: 'roof-details', type: 'fill-extrusion', source: 'scenery', filter: ['==', ['get', 'kind'], 'roof-detail'], layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['get', 'color'], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-opacity': 1 } },
             { id: 'tree-trunks', type: 'fill-extrusion', source: 'scenery', filter: ['==', ['get', 'kind'], 'tree-trunk'], layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['get', 'color'], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-opacity': 1 } },
             { id: 'tree-crowns', type: 'fill-extrusion', source: 'scenery', filter: ['==', ['get', 'kind'], 'tree-crown'], layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['get', 'color'], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-opacity': 1, 'fill-extrusion-vertical-gradient': true } },
-            { id: 'zone-walls', type: 'fill-extrusion', source: 'zones', filter: ['in', ['get', 'kind'], ['literal', ['wall', 'corner']]], layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ZONE_COLOR, 'fill-extrusion-height': 40, 'fill-extrusion-base': 0, 'fill-extrusion-opacity': .18, 'fill-extrusion-vertical-gradient': false } },
-            { id: 'zone-top', type: 'fill-extrusion', source: 'zones', filter: ['==', ['get', 'kind'], 'wall'], layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ZONE_COLOR, 'fill-extrusion-height': 41, 'fill-extrusion-base': 40, 'fill-extrusion-opacity': .6, 'fill-extrusion-vertical-gradient': false } },
           ],
         },
       })

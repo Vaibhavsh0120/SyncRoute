@@ -10,6 +10,7 @@ interface Vehicle extends VehicleSnapshot { departure: number; adoptsRouting: bo
 interface SignalState {
   definition: SignalDefinition; phase: 0 | 1; nextPhase: 0 | 1; stage: SignalSnapshot['stage']; started: number
   pressure: [number,number]; priority: boolean; recovery: 0 | 1 | null; lastService: [number,number]; serviceViolations: number; blocked: boolean
+  fixedDuration?: number
 }
 export interface SimulationWorld {
   scenario: Scenario; mode: Mode; network: RoadNetwork; time: number; vehicles: Vehicle[]; boundary: Demand[]; demandIndex: number
@@ -46,10 +47,49 @@ function edgeCost(stats:Map<string,EdgeSnapshot>, edge:RoadEdge):number {
   return edge.length/edge.freeFlowSpeed + s.stopped*s.dischargeHeadway + preventive + (s.occupancy>=.95?60:0)
 }
 
+function signalCycle(id: string, seed: number): number {
+  if (id === 's') return 30
+  let h = seed
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0
+  return 20 + Math.abs(h) % 21 // 20 to 40 seconds
+}
+
+function signalOffset(id: string, seed: number, cycle: number): number {
+  if (id === 's') return 0
+  let h = (seed * 17) | 0
+  for (let i = 0; i < id.length; i++) h = (h * 37 + id.charCodeAt(i)) | 0
+  return -(Math.abs(h) % cycle)
+}
+
+function signalPhase(id: string, seed: number): 0 | 1 {
+  if (id === 's') return 0
+  let h = (seed * 43) | 0
+  for (let i = 0; i < id.length; i++) h = (h * 13 + id.charCodeAt(i)) | 0
+  return (Math.abs(h) % 2) as 0 | 1
+}
+
 export function createWorld(scenario:Scenario,mode:Mode,network:RoadNetwork=NETWORK):SimulationWorld {
   const world: SimulationWorld={
     scenario,mode,network,time:0,vehicles:[],boundary:[],demandIndex:0,edgeGroups:new Map(network.edges.map(e=>[e.id,[]])),routes:new Map(),
-    signals:network.signals.map(definition=>({definition,phase:0,nextPhase:0,stage:'green',started:0,pressure:[0,0],priority:false,recovery:null,lastService:[0,0],serviceViolations:0,blocked:false})),
+    signals:network.signals.map(definition => {
+      const fixedDuration = definition.id === 's' ? 30 : signalCycle(definition.id, scenario.seed)
+      const phase = (mode === 'fixed' && definition.id !== 's') ? signalPhase(definition.id, scenario.seed) : 0
+      const started = (mode === 'fixed' && definition.id !== 's') ? signalOffset(definition.id, scenario.seed, fixedDuration) : 0
+      return {
+        definition,
+        phase,
+        nextPhase: phase,
+        stage: 'green' as const,
+        started,
+        fixedDuration,
+        pressure: [0, 0] as [number, number],
+        priority: false,
+        recovery: null,
+        lastService: [started, started] as [number, number],
+        serviceViolations: 0,
+        blocked: false,
+      }
+    }),
     edgeMap:new Map(network.edges.map(e=>[e.id,e])),discharge:new Map(),edgeHistory:new Map(),cellCapacities:createCellCapacities(network),cellHistory:new Map(),edgeStats:[],
     completed:0,completedTravelTime:0,completedWaitingTime:0,ambulanceTravelTime:null,totalWaitingTime:0,totalSystemTime:0,peakQueue:0,reroutes:0,spillbackSeconds:0,speedHistory:[],history:[],decisions:[],decisionTimes:new Map(),decisionSerial:0,snapshot:null as unknown as SimulationSnapshot,
   }
@@ -100,7 +140,8 @@ function updateSignals(world:SimulationWorld) {
       else if(world.time-signal.lastService[phase]>90)signal.serviceViolations++
     }
     if(world.mode==='fixed'){
-      if(signal.stage==='green'&&world.time-signal.started>=30)startSwitch(world,signal,signal.phase===0?1:0,'fixed 30-second green elapsed')
+      const cycle = signal.fixedDuration ?? 30
+      if(signal.stage==='green'&&world.time-signal.started>=cycle)startSwitch(world,signal,signal.phase===0?1:0,`fixed ${cycle}-second green elapsed`)
       continue
     }
     const ambulance=world.vehicles.find(v=>v.kind==='ambulance'&&signal.definition.phases.some(phase=>phase.includes(v.edgeId))&&world.edgeMap.get(v.edgeId)!.length-v.position<=120)
@@ -239,7 +280,8 @@ function refreshSnapshot(world:SimulationWorld) {
   const ambulanceStatus=!ambulanceDemand?'not-scheduled':world.ambulanceTravelTime!==null?'completed':world.vehicles.some(v=>v.kind==='ambulance')?'travelling':world.boundary.some(v=>v.kind==='ambulance')?'waiting':'pending'
   world.snapshot={mode:world.mode,time:world.time,vehicles,edges:world.edgeStats.map(e=>({...e})),hexStats,signals:world.signals.map(s=>{
     const elapsed=world.time-s.started
-    return {id:s.definition.id,nodeId:s.definition.nodeId,phase:s.phase,stage:s.stage,elapsed,remaining:Math.max(0,(s.stage==='amber'?2:s.stage==='all-red'?1:world.mode==='fixed'?30:40)-elapsed),pressure:[...s.pressure],priority:s.priority,blocked:s.blocked,serviceViolations:s.serviceViolations}
+    const cycle = world.mode==='fixed' ? (s.fixedDuration ?? 30) : 40
+    return {id:s.definition.id,nodeId:s.definition.nodeId,phase:s.phase,stage:s.stage,elapsed,remaining:Math.max(0,(s.stage==='amber'?2:s.stage==='all-red'?1:cycle)-elapsed),pressure:[...s.pressure],priority:s.priority,blocked:s.blocked,serviceViolations:s.serviceViolations}
   }),metrics:{requested:world.demandIndex,scheduled:world.scenario.demand.length-world.demandIndex,onRoad:vehicles.length,boundaryWaiting:world.boundary.length,completed:world.completed,unfinished:vehicles.length+world.boundary.length,totalWaitingTime:world.totalWaitingTime,totalSystemTime:world.totalSystemTime,longestQueue,peakQueue:world.peakQueue,averageSpeed:world.speedHistory.reduce((sum,x)=>sum+x,0)/world.speedHistory.length,meanCompletedTravelTime:world.completed?world.completedTravelTime/world.completed:null,ambulanceTravelTime:world.ambulanceTravelTime,ambulanceStatus,reroutes:world.reroutes,spillbackSeconds:world.spillbackSeconds,yellowCells:hexStats.filter(h=>h.count&&h.category==='yellow').length,redCells:hexStats.filter(h=>h.count&&h.category==='red').length},decisions:world.decisions.map(d=>({...d})),history:world.history.map(h=>({...h})),incidentActive:world.scenario.events.some(e=>world.time>=e.start&&world.time<e.end),finished:world.time>=world.scenario.duration}
 }
 
