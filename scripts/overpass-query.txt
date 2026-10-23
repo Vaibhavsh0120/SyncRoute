@@ -1,0 +1,1 @@
+[out:json][timeout:45];(way["highway"](28.625,77.208,28.640,77.227);way["building"](28.625,77.208,28.640,77.227);way["leisure"="park"](28.625,77.208,28.640,77.227););out body;>;out skel qt;

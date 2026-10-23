@@ -1,0 +1,6 @@
+export { createWorld, stepWorld, snapshotWorld, previewRoute, createComparison, stepComparison, snapshotComparison } from './engine'
+export type { SimulationWorld, Comparison } from './engine'
+export { createScenario } from './scenarios'
+export { shortestPath } from './routing'
+export { H3_RESOLUTION, vehicleCell } from './hex'
+export { classifyTraffic, projectOccupancy } from './category'
