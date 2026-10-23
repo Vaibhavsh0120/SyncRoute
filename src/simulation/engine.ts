@@ -144,7 +144,10 @@ function updateSignals(world:SimulationWorld) {
       if(signal.stage==='green'&&world.time-signal.started>=cycle)startSwitch(world,signal,signal.phase===0?1:0,`fixed ${cycle}-second green elapsed`)
       continue
     }
-    const ambulance=world.vehicles.find(v=>v.kind==='ambulance'&&signal.definition.phases.some(phase=>phase.includes(v.edgeId))&&world.edgeMap.get(v.edgeId)!.length-v.position<=120)
+    const approachingAmbulance=world.vehicles.find(v=>v.kind==='ambulance'&&signal.definition.phases.some(phase=>phase.includes(v.edgeId))&&world.edgeMap.get(v.edgeId)!.length-v.position<=120)
+    // Priority cannot clear a single-lane queue into a full receiver. Let feasible
+    // cross traffic run, then request priority again when the head can discharge.
+    const ambulance=approachingAmbulance&&incomingDemand(world,approachingAmbulance.edgeId,stats).feasible?approachingAmbulance:undefined
     if(ambulance){
       const phase:0|1=signal.definition.phases[0].includes(ambulance.edgeId)?0:1
       if(!signal.priority){signal.recovery=signal.phase;decision(world,`priority-${signal.definition.id}`,{type:'priority',title:'Ambulance approach detected',detail:`${signal.definition.name}: reserve the approach; all amber and all-red safety intervals remain active.`,nodeId:signal.definition.nodeId})}
@@ -154,7 +157,7 @@ function updateSignals(world:SimulationWorld) {
     }
     if(signal.priority){
       signal.priority=false
-      decision(world,`recovery-${signal.definition.id}`,{type:'priority',title:'Ambulance passed; normal service resumes',detail:`${signal.definition.name}: restore the saved phase after a minimum 10-second green and normal clearance.`,nodeId:signal.definition.nodeId})
+      decision(world,`recovery-${signal.definition.id}`,{type:'priority',title:approachingAmbulance?'Ambulance blocked; normal service resumes':'Ambulance passed; normal service resumes',detail:`${signal.definition.name}: restore the saved phase after a minimum 10-second green and normal clearance.${approachingAmbulance?' Priority can resume when downstream storage opens.':''}`,nodeId:signal.definition.nodeId})
     }
     if(signal.stage!=='green'||world.time-signal.started<10)continue
     if(signal.recovery!==null){
@@ -195,6 +198,12 @@ export function stepWorld(world:SimulationWorld):void {
   if(world.time>=world.scenario.duration)return
   world.time++
   while(world.demandIndex<world.scenario.demand.length&&world.scenario.demand[world.demandIndex]!.departure<=world.time){world.boundary.push(world.scenario.demand[world.demandIndex]!);world.demandIndex++}
+  // A head already at the junction can accept advice while its approach is red.
+  // Signal feasibility must see that route; crossing still requires green below.
+  for(const edge of world.network.edges){
+    const head=edgeVehicles(world,edge.id)[0]
+    if(head&&head.position>=edge.length-1e-9)rerouteAtJunction(world,head)
+  }
   updateSignals(world)
   for(const edge of world.network.edges){
     let front=edge.length+GAP

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { advanceClock } from './playback'
+import { advanceClock, interpolationFrameDue } from './playback'
 
 describe('fixed simulation clock', () => {
   it('preserves sub-second time instead of varying simulation ticks with rendering', () => {
@@ -18,5 +18,19 @@ describe('fixed simulation clock', () => {
     expect(ticks).toBe(20)
     expect(remainder).toBeCloseTo(0)
     expect(advanceClock(1000, 20, 0).ticks).toBe(ticks)
+  })
+})
+
+describe('vehicle interpolation frames', () => {
+  it('flushes a settled paused frame even before the next throttled frame is due', () => {
+    expect(interpolationFrameDue(1, .75, 16)).toBe(true)
+    expect(interpolationFrameDue(1, .75, 0)).toBe(true)
+    expect(interpolationFrameDue(1, 1, 16)).toBe(false)
+  })
+
+  it('still limits intermediate vehicle frames to the normal cadence', () => {
+    expect(interpolationFrameDue(.8, .75, 16)).toBe(false)
+    expect(interpolationFrameDue(.8, .75, 32)).toBe(true)
+    expect(interpolationFrameDue(.8, .8, 100)).toBe(false)
   })
 })

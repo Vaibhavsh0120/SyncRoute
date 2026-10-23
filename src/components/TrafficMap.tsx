@@ -4,9 +4,13 @@ import type { GeoJSONSource, Map as LibreMap } from 'maplibre-gl'
 import type { ExpressionSpecification } from '@maplibre/maplibre-gl-style-spec'
 import mapWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import { cellToBoundary, polygonToCells } from 'h3-js'
-import type { FeatureCollection, Geometry } from 'geojson'
+import type { FeatureCollection, Geometry, Point } from 'geojson'
+import { CenterToFit } from '@carbon/icons-react'
 import type { CameraState, Coordinate, RoutePreview, Selection, SimulationSnapshot } from '../domain/types'
 import { coordinateAt, NETWORK, networkGeometry } from '../data/network'
+import { vehicleGeometry } from './vehicleGeometry'
+import type { VehicleProperties } from './vehicleGeometry'
+import { interpolationFrameDue } from '../lib/playback'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import './TrafficMap.css'
 
@@ -32,7 +36,7 @@ export interface TrafficMapProps {
 const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] }
 const EDGE_BY_ID = new Map(NETWORK.edges.map(edge => [edge.id, edge]))
 const CAR_COLORS = ['#edf3f6', '#d65b57', '#efbd3f', '#3e8abb', '#38a8ad', '#435166']
-const THREE_D_LAYERS = ['buildings-shadow', 'buildings-3d', 'building-facades', 'building-roofs', 'scenery-shadow', 'tree-trunks', 'tree-crowns', 'roof-details', 'road-markings', 'park-landscape-3d', 'hex-3d']
+const THREE_D_LAYERS = ['buildings-shadow', 'buildings-3d', 'building-facades', 'building-roofs', 'scenery-shadow', 'tree-trunks', 'tree-crowns', 'roof-details', 'road-markings', 'park-landscape-3d', 'vehicle-shadows', 'vehicle-bodies']
 const [SW, NE] = NETWORK.bounds
 const CELLS = polygonToCells([[SW[1], SW[0]], [SW[1], NE[0]], [NE[1], NE[0]], [NE[1], SW[0]], [SW[1], SW[0]]], 10)
 const GRID = CELLS.map(id => ({
@@ -71,7 +75,7 @@ function activeRoutes(snapshot: SimulationSnapshot): FeatureCollection {
   }) }
 }
 
-function vehicleData(props: TrafficMapProps, reducedMotion: boolean): FeatureCollection {
+function vehicleData(props: TrafficMapProps, reducedMotion: boolean): FeatureCollection<Point, VehicleProperties & { sprite: string }> {
   const previous = new Map(props.previousSnapshot?.vehicles.map(vehicle => [vehicle.id, vehicle]) ?? [])
   return {
     type: 'FeatureCollection',
@@ -92,7 +96,7 @@ function vehicleData(props: TrafficMapProps, reducedMotion: boolean): FeatureCol
       // positions, routing and H3 occupancy retain the original coordinates.
       const coordinate = [centerline[0] - Math.cos(radians) * 1.8 / 97600, centerline[1] + Math.sin(radians) * 1.8 / 111320]
       const variant = [...vehicle.id].reduce((hash, char) => hash + char.charCodeAt(0), 0) % CAR_COLORS.length
-      return { type: 'Feature', properties: { id: vehicle.id, kind: vehicle.kind, bearing, sprite: `car-${variant}` }, geometry: { type: 'Point', coordinates: coordinate } }
+      return { type: 'Feature', properties: { id: vehicle.id, kind: vehicle.kind, bearing, color: CAR_COLORS[variant], sprite: `car-${variant}` }, geometry: { type: 'Point', coordinates: coordinate } }
     }),
   }
 }
@@ -261,6 +265,7 @@ function setSource(map: LibreMap, id: string, data: FeatureCollection) {
 }
 
 const LAST_MAP_STATE = new WeakMap<LibreMap, TrafficMapProps>()
+const LAST_VEHICLE_FRAME = new WeakMap<LibreMap, number>()
 
 function updateMap(map: LibreMap, props: TrafficMapProps, reducedMotion: boolean) {
   const previous = LAST_MAP_STATE.get(map)
@@ -271,7 +276,16 @@ function updateMap(map: LibreMap, props: TrafficMapProps, reducedMotion: boolean
       features: props.snapshot.edges.map(stat => ({ type: 'Feature', properties: { category: stat.category, blocked: stat.blocked }, geometry: { type: 'LineString', coordinates: EDGE_BY_ID.get(stat.id)?.coordinates ?? [] } })),
     })
   }
-  if (previous?.snapshot !== props.snapshot || previous?.previousSnapshot !== props.previousSnapshot || (!reducedMotion && previous?.interpolation !== props.interpolation)) setSource(map, 'vehicles', vehicleData(props, reducedMotion))
+  const now = performance.now()
+  const changedSnapshot = previous?.snapshot !== props.snapshot || previous?.previousSnapshot !== props.previousSnapshot
+  // Snapshot changes always render, including while paused. Interpolation is
+  // capped at 30 fps so the two maps do not rebuild GeoJSON at display refresh.
+  if (changedSnapshot || previous?.viewMode !== props.viewMode || (!reducedMotion && interpolationFrameDue(props.interpolation, previous?.interpolation, now - (LAST_VEHICLE_FRAME.get(map) ?? 0)))) {
+    const vehicles = vehicleData(props, reducedMotion)
+    setSource(map, 'vehicles', vehicles)
+    if (props.viewMode === '3d') setSource(map, 'vehicle-models', vehicleGeometry(vehicles))
+    LAST_VEHICLE_FRAME.set(map, now)
+  }
   if (!previous || previous.snapshot !== props.snapshot || previous.showRoutes !== props.showRoutes || previous.route !== props.route) {
     const routeFeatures: GeoJSON.Feature[] = []
     if (props.route?.coordinates?.length) {
@@ -294,9 +308,10 @@ function updateMap(map: LibreMap, props: TrafficMapProps, reducedMotion: boolean
     }
     if (map.getLayer('tree-canopy-2d')) map.setLayoutProperty('tree-canopy-2d', 'visibility', props.viewMode === '2d' ? 'visible' : 'none')
     if (map.getLayer('park-landscape-2d')) map.setLayoutProperty('park-landscape-2d', 'visibility', props.viewMode === '2d' ? 'visible' : 'none')
+    if (map.getLayer('vehicles')) map.setLayoutProperty('vehicles', 'visibility', props.viewMode === '2d' ? 'visible' : 'none')
     map.setPaintProperty('background', 'background-color', props.viewMode === '3d' ? '#e9e9de' : '#f0f3f7')
     map.setPaintProperty('parks', 'fill-color', props.viewMode === '3d' ? '#4d9359' : '#d5e8d8')
-    map.setPaintProperty('roads', 'line-color', props.viewMode === '3d' ? '#798588' : '#fff')
+    map.setPaintProperty('roads', 'line-color', props.viewMode === '3d' ? '#738083' : '#fff')
     map.setPaintProperty('roads-casing', 'line-color', props.viewMode === '3d' ? '#c7c9bd' : '#d3dbe5')
     map.setPaintProperty('congestion-line', 'line-opacity', props.viewMode === '3d' ? .45 : .7)
   }
@@ -332,7 +347,7 @@ export function TrafficMap(props: TrafficMapProps) {
         center: [latest.current.camera.longitude, latest.current.camera.latitude],
         zoom: latest.current.camera.zoom,
         bearing: latest.current.camera.bearing,
-        pitch: latest.current.viewMode === '3d' ? 50 : 0,
+        pitch: latest.current.viewMode === '3d' ? latest.current.camera.pitch : 0,
         minZoom: 12.3,
         maxZoom: 18.5,
         maxBounds: [[77.201, 28.617], [77.236, 28.648]],
@@ -351,6 +366,7 @@ export function TrafficMap(props: TrafficMapProps) {
             hexagons: { type: 'geojson', data: EMPTY },
             zones: { type: 'geojson', data: EMPTY },
             vehicles: { type: 'geojson', data: EMPTY },
+            'vehicle-models': { type: 'geojson', data: EMPTY, tolerance: 0, buffer: 32, maxzoom: 20 },
             route: { type: 'geojson', data: EMPTY },
             congestion: { type: 'geojson', data: EMPTY },
           },
@@ -364,18 +380,18 @@ export function TrafficMap(props: TrafficMapProps) {
             { id: 'road-markings', type: 'line', source: 'network', layout: { visibility: 'none' }, paint: { 'line-color': '#fff7dd', 'line-width': 1, 'line-dasharray': [2, 5], 'line-opacity': .65 } },
             { id: 'scenery-shadow', type: 'fill', source: 'scenery', filter: ['==', ['get', 'kind'], 'tree-crown'], layout: { visibility: 'none' }, paint: { 'fill-color': '#2d4938', 'fill-opacity': .11, 'fill-translate': [4, 5], 'fill-translate-anchor': 'map' } },
             { id: 'tree-canopy-2d', type: 'fill', source: 'scenery', filter: ['==', ['get', 'kind'], 'tree-crown'], paint: { 'fill-color': ['get', 'color'], 'fill-opacity': .52 } },
-            { id: 'park-landscape-2d', type: 'fill', source: 'scenery', filter: ['in', ['get', 'kind'], ['literal', ['park-lawn', 'park-path', 'water-feature', 'park-amphitheater']]], paint: { 'fill-color': ['get', 'color'], 'fill-opacity': .7 } },
-            { id: 'hex-fill', type: 'fill', source: 'hexagons', paint: { 'fill-color': ['match', ['get', 'category'], 'red', '#eb5961', 'yellow', '#f2bc46', 'green', '#37bb8c', '#94b5d4'], 'fill-opacity': ['match', ['get', 'category'], 'empty', .025, 'green', .10, .32] } },
+            { id: 'park-landscape-2d', type: 'fill', source: 'scenery', filter: ['in', ['get', 'kind'], ['literal', ['park-lawn', 'park-path', 'water-feature', 'park-amphitheater', 'courtyard-plaza']]], paint: { 'fill-color': ['get', 'color'], 'fill-opacity': .7 } },
+            { id: 'hex-fill', type: 'fill', source: 'hexagons', paint: { 'fill-color': ['match', ['get', 'category'], 'red', '#eb5961', 'yellow', '#f2bc46', 'green', '#37bb8c', '#94b5d4'], 'fill-opacity': ['match', ['get', 'category'], 'empty', .005, 'green', .025, 'yellow', .12, .18] } },
             { id: 'hex-outline', type: 'line', source: 'hexagons', paint: { 'line-color': '#708eaf', 'line-width': .7, 'line-opacity': .25 } },
-            { id: 'hex-3d', type: 'fill-extrusion', source: 'hexagons', filter: ['!=', ['get', 'category'], 'empty'], layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['match', ['get', 'category'], 'red', '#eb5961', 'yellow', '#f2bc46', 'green', '#37bb8c', '#94b5d4'], 'fill-extrusion-height': ['match', ['get', 'category'], 'red', 16, 'yellow', 9, 'green', 4, 1], 'fill-extrusion-base': 0, 'fill-extrusion-opacity': .28, 'fill-extrusion-vertical-gradient': true } },
+            { id: 'hex-3d', type: 'fill-extrusion', source: 'hexagons', filter: ['!=', ['get', 'category'], 'empty'], layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['match', ['get', 'category'], 'red', '#eb5961', 'yellow', '#f2bc46', '#c6dccb'], 'fill-extrusion-height': .16, 'fill-extrusion-base': 0, 'fill-extrusion-opacity': .06, 'fill-extrusion-vertical-gradient': false } },
             { id: 'network-line', type: 'line', source: 'network', paint: { 'line-color': '#91a5bd', 'line-width': 2, 'line-opacity': .5 } },
             { id: 'congestion-line', type: 'line', source: 'congestion', paint: { 'line-color': ['match', ['get', 'category'], 'red', '#e35a62', 'yellow', '#e3ab31', '#40aa87'], 'line-width': ['case', ['get', 'blocked'], 6, 3], 'line-opacity': .7 } },
             { id: 'route-halo', type: 'line', source: 'route', paint: { 'line-color': '#fff', 'line-width': 9, 'line-opacity': .9 } },
             { id: 'route-line', type: 'line', source: 'route', paint: { 'line-color': '#7652dc', 'line-width': 5, 'line-opacity': .95 } },
             { id: 'park-landscape-3d', type: 'fill-extrusion', source: 'scenery', filter: ['in', ['get', 'kind'], ['literal', ['park-lawn', 'park-path', 'water-feature', 'park-plinth', 'park-amphitheater', 'flagpole-plinth', 'flagpole', 'flagpole-finial', 'flag-saffron', 'flag-white', 'flag-chakra', 'flag-green']]], layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['get', 'color'], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-opacity': 1, 'fill-extrusion-vertical-gradient': false } },
-            { id: 'buildings-3d', type: 'fill-extrusion', source: 'buildings', layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['coalesce', ['get', 'facadeColor'], '#e5d8bf'], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': 0, 'fill-extrusion-opacity': 1, 'fill-extrusion-vertical-gradient': true } },
+            { id: 'buildings-3d', type: 'fill-extrusion', source: 'buildings', layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['coalesce', ['get', 'facadeColor'], '#e5d8bf'], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': ['coalesce', ['get', 'base'], 0], 'fill-extrusion-opacity': 1, 'fill-extrusion-vertical-gradient': true } },
             { id: 'building-roofs', type: 'fill-extrusion', source: 'buildings', layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['coalesce', ['get', 'roofColor'], '#b8bab4'], 'fill-extrusion-height': ['+', ['get', 'height'], .4], 'fill-extrusion-base': ['get', 'height'], 'fill-extrusion-opacity': 1, 'fill-extrusion-vertical-gradient': false } },
-            { id: 'roof-details', type: 'fill-extrusion', source: 'scenery', filter: ['==', ['get', 'kind'], 'roof-detail'], layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['get', 'color'], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-opacity': 1 } },
+            { id: 'roof-details', type: 'fill-extrusion', source: 'scenery', filter: ['in', ['get', 'kind'], ['literal', ['roof-detail', 'street-furniture', 'courtyard-plaza']]], layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['get', 'color'], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-opacity': 1 } },
             { id: 'tree-trunks', type: 'fill-extrusion', source: 'scenery', filter: ['==', ['get', 'kind'], 'tree-trunk'], layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['get', 'color'], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-opacity': 1 } },
             { id: 'tree-crowns', type: 'fill-extrusion', source: 'scenery', filter: ['==', ['get', 'kind'], 'tree-crown'], layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['get', 'color'], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-opacity': 1, 'fill-extrusion-vertical-gradient': true } },
           ],
@@ -385,7 +401,7 @@ export function TrafficMap(props: TrafficMapProps) {
       map.scrollZoom.enable()
       map.scrollZoom.setWheelZoomRate(.002)
       map.scrollZoom.setZoomRate(1 / 110)
-      map.addControl(new maplibregl.NavigationControl({ showCompass: latest.current.viewMode === '3d', visualizePitch: true }), 'bottom-right')
+      map.addControl(new maplibregl.NavigationControl({ showCompass: true, visualizePitch: true }), 'bottom-right')
       map.on('load', () => {
         window.clearTimeout(loadTimeout)
         CAR_COLORS.forEach((color, i) => map.addImage(`car-${i}`, carSprite(false, color), { pixelRatio: 2 }))
@@ -393,7 +409,9 @@ export function TrafficMap(props: TrafficMapProps) {
         map.addImage('bike', fleetSprite('bike'), { pixelRatio: 2 })
         map.addImage('bus', fleetSprite('bus'), { pixelRatio: 2 })
         for (const facade of ['heritage', 'stone', 'glass', 'residential']) map.addImage(`facade-${facade}`, facadeSprite(facade), { pixelRatio: 2 })
-        map.addLayer({ id: 'building-facades', type: 'fill-extrusion', source: 'buildings', layout: { visibility: 'none' }, paint: { 'fill-extrusion-pattern': ['concat', 'facade-', ['coalesce', ['get', 'facade'], 'heritage']], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': 0, 'fill-extrusion-opacity': .8, 'fill-extrusion-vertical-gradient': true } }, 'building-roofs')
+        map.addLayer({ id: 'building-facades', type: 'fill-extrusion', source: 'buildings', layout: { visibility: 'none' }, paint: { 'fill-extrusion-pattern': ['concat', 'facade-', ['coalesce', ['get', 'facade'], 'heritage']], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': ['coalesce', ['get', 'base'], 0], 'fill-extrusion-opacity': .8, 'fill-extrusion-vertical-gradient': true } }, 'building-roofs')
+        map.addLayer({ id: 'vehicle-shadows', type: 'fill', source: 'vehicle-models', filter: ['==', ['get', 'part'], 'shadow'], layout: { visibility: 'none' }, paint: { 'fill-color': '#21353d', 'fill-opacity': .26 } }, 'park-landscape-3d')
+        map.addLayer({ id: 'vehicle-bodies', type: 'fill-extrusion', source: 'vehicle-models', filter: ['!=', ['get', 'part'], 'shadow'], layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['get', 'color'], 'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-opacity': 1, 'fill-extrusion-vertical-gradient': false } })
         map.addLayer({ id: 'ambulance-halo', type: 'circle', source: 'vehicles', filter: ['==', ['get', 'kind'], 'ambulance'], paint: { 'circle-radius': 12, 'circle-color': '#e64659', 'circle-opacity': .23, 'circle-stroke-width': 1.5, 'circle-stroke-color': '#e64659' } })
         map.addLayer({ id: 'vehicles', type: 'symbol', source: 'vehicles', layout: { 'icon-image': ['match', ['get', 'kind'], 'ambulance', 'ambulance', 'bike', 'bike', 'bus', 'bus', ['get', 'sprite']], 'icon-size': ['interpolate', ['exponential', 2], ['zoom'], 14, .28, 16, .55, 18, 1.8], 'icon-rotate': ['get', 'bearing'], 'icon-rotation-alignment': 'map', 'icon-pitch-alignment': 'map', 'icon-allow-overlap': true, 'icon-ignore-placement': true } })
         for (const label of LABELS) {
@@ -424,14 +442,14 @@ export function TrafficMap(props: TrafficMapProps) {
       map.on('click', event => {
         if (map.getLayer('vehicles')) {
           const { x, y } = event.point
-          const vehicle = map.queryRenderedFeatures([[x - 6, y - 6], [x + 6, y + 6]], { layers: ['vehicles'] })[0]
+          const vehicle = map.queryRenderedFeatures([[x - 8, y - 8], [x + 8, y + 8]], { layers: latest.current.viewMode === '3d' ? ['vehicle-bodies'] : ['vehicles'] })[0]
           if (vehicle?.properties?.id) {
             latest.current.onSelect({ type: 'vehicle', id: String(vehicle.properties.id), mode: latest.current.snapshot.mode })
             return
           }
         }
         if (!latest.current.showHexagons) return
-        const layers = latest.current.viewMode === '3d' ? ['zone-floor', 'zone-walls', 'zone-top'] : ['hex-fill']
+        const layers = latest.current.viewMode === '3d' ? ['hex-3d', 'hex-fill'] : ['hex-fill']
         const feature = map.queryRenderedFeatures(event.point, { layers })[0]
         if (feature?.properties?.id) latest.current.onSelect({ type: 'hex', id: String(feature.properties.id), mode: latest.current.snapshot.mode })
       })
@@ -516,6 +534,9 @@ export function TrafficMap(props: TrafficMapProps) {
     <div ref={container} className="traffic-map-canvas" inert={!!error} aria-label={`${props.snapshot.mode === 'fixed' ? 'Fixed signal' : 'Optimized'} Connaught Place traffic map`} />
     {!ready && !error && <div className="traffic-map-loading" role="status">Loading local Connaught Place map…</div>}
     {error && <div className="traffic-map-fallback"><div className="traffic-map-recovery"><p role="status">{error}</p><button type="button" onClick={() => { setReady(false); setError(null); setRetryKey(key => key + 1) }}>Retry interactive map</button></div><FallbackNetwork {...props} /></div>}
+    {ready && !error && props.viewMode === '3d' && <button className="traffic-map-reset" type="button" title="Reset map view" aria-label="Reset map view" onClick={() => {
+      instance.current?.easeTo({ center: NETWORK.center, zoom: 15.8, bearing: -25, pitch: 55, duration: reducedMotion.current ? 0 : 550 })
+    }}><CenterToFit size={16} aria-hidden="true" /><span>Reset view</span></button>}
     <div className="traffic-map-attribution">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a></div>
   </div>
 }

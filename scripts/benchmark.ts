@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { createComparison, createScenario, snapshotComparison, stepComparison } from '../src/simulation/index'
 import type { ScenarioId } from '../src/domain/types'
 
-const ids: ScenarioId[] = ['normal', 'rush', 'incident', 'ambulance']
+const ids: ScenarioId[] = ['city', 'normal', 'rush', 'incident', 'ambulance']
 const runs = []
 for (const id of ids) {
   const comparison = createComparison(createScenario(id, 42))

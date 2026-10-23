@@ -22,6 +22,21 @@ const demand = (n = 20): Demand[] => Array.from({ length: n }, (_, i) => ({ id: 
 const scenario = (items = demand()): Scenario => ({ id: 'normal', name: 'test', description: '', seed: 42, arrivalDuration: 60, duration: 180, demand: items, events: [] })
 const run = (w: ReturnType<typeof createWorld>, ticks: number) => { for (let i = 0; i < ticks; i++) stepWorld(w); return snapshotWorld(w) }
 
+function blockedRerouteWorld(adoptsRouting=true,detourLength=50) {
+  const n:RoadNetwork={...network,nodes:[...network.nodes,{id:'e',name:'e',coordinate:[77.214,28.63]}],edges:[
+    ...network.edges.map(e=>e.id==='bc'?{...e,capacity:1}:e),
+    {...network.edges[0]!,id:'be',from:'b',to:'e',length:detourLength},
+    {...network.edges[0]!,id:'ec',from:'e',to:'c',length:detourLength},
+  ]}
+  const items:Demand[]=[
+    {id:'blocker-1',departure:0,origin:'b',destination:'c',adoptsRouting:false,kind:'car'},
+    {id:'side-road',departure:0,origin:'d',destination:'e',adoptsRouting:false,kind:'car'},
+    {id:'blocker-2',departure:1,origin:'b',destination:'c',adoptsRouting:false,kind:'car'},
+    {id:'driver',departure:20,origin:'a',destination:'c',adoptsRouting,kind:'car'},
+  ]
+  return createWorld({...scenario(items),events:[{id:'restriction',type:'capacity',edgeId:'bc',start:1,end:180,factor:.001}]},'optimized',n)
+}
+
 describe('routing', () => {
   it('finds the hand-calculated shortest directed route and rejects unreachable trips', () => {
     expect(shortestPath(network, 'a', 'c')?.edgeIds).toEqual(['ab', 'bc'])
@@ -231,6 +246,54 @@ describe('world physics', () => {
     expect(s.metrics.ambulanceStatus).toBe('completed')
     expect(s.decisions.some(d=>d.title.includes('normal service'))).toBe(true)
   })
+  it('serves feasible cross traffic instead of holding priority for a blocked ambulance', () => {
+    const n={...network,edges:[...network.edges.map(e=>e.id==='bc'?{...e,capacity:1,freeFlowSpeed:.01}:e),{...network.edges[0]!,id:'ba',from:'b',to:'a'}]}
+    const items:Demand[]=[
+      {id:'receiver-blocker',departure:0,origin:'b',destination:'c',adoptsRouting:false,kind:'car'},
+      {id:'ambulance',departure:0,origin:'a',destination:'c',adoptsRouting:false,kind:'ambulance'},
+      {id:'side-road',departure:0,origin:'d',destination:'a',adoptsRouting:false,kind:'car'},
+    ]
+    const s=run(createWorld(scenario(items),'optimized',n),120)
+    expect(s.metrics.completed).toBe(1)
+    expect(s.vehicles.some(v=>v.id==='side-road')).toBe(false)
+    expect(s.vehicles.find(v=>v.id==='ambulance')!.edgeId).toBe('ab')
+    expect(s.signals[0]!.priority).toBe(false)
+    expect(s.signals[0]!.serviceViolations).toBe(0)
+  })
+  it('resumes safe ambulance priority when downstream storage becomes available', () => {
+    const n={...network,edges:[...network.edges.map(e=>e.id==='bc'?{...e,capacity:1,freeFlowSpeed:.5}:e),{...network.edges[0]!,id:'ba',from:'b',to:'a'}]}
+    const items:Demand[]=[
+      {id:'receiver-blocker',departure:0,origin:'b',destination:'c',adoptsRouting:false,kind:'car'},
+      {id:'ambulance',departure:0,origin:'a',destination:'c',adoptsRouting:false,kind:'ambulance'},
+      {id:'side-road',departure:0,origin:'d',destination:'a',adoptsRouting:false,kind:'car'},
+    ]
+    const w=createWorld(scenario(items),'optimized',n)
+    const blocked=run(w,50)
+    expect(blocked.metrics.completed).toBe(1)
+    expect(blocked.vehicles.find(v=>v.id==='ambulance')!.edgeId).toBe('ab')
+    expect(blocked.signals[0]!.priority).toBe(false)
+    const stages=new Set<string>()
+    let resumed=false
+    for(let t=0;t<90;t++){
+      const before=snapshotWorld(w)
+      stepWorld(w)
+      const s=snapshotWorld(w),signal=s.signals[0]!
+      stages.add(signal.stage)
+      if(signal.priority)resumed=true
+      if(before.signals[0]!.stage==='green'&&signal.stage==='amber')expect(before.signals[0]!.elapsed+1).toBeGreaterThanOrEqual(10)
+      const ambulance=s.vehicles.find(v=>v.id==='ambulance'),previous=before.vehicles.find(v=>v.id==='ambulance')
+      if(ambulance?.edgeId==='bc'&&previous?.edgeId==='ab'){
+        expect(signal.stage).toBe('green')
+        expect(signal.phase).toBe(0)
+        expect(before.vehicles.some(v=>v.id==='receiver-blocker')).toBe(false)
+      }
+    }
+    expect(resumed).toBe(true)
+    expect(stages.has('amber')).toBe(true)
+    expect(stages.has('all-red')).toBe(true)
+    expect(snapshotWorld(w).metrics.ambulanceStatus).toBe('completed')
+    expect(snapshotWorld(w).signals[0]!.priority).toBe(false)
+  })
   it('propagates a yellow H3 warning to active road management even when link occupancy is low', () => {
     const edge={...network.edges[0]!,length:750,capacity:100,freeFlowSpeed:1,coordinates:[[77.21,28.63],[77.24,28.63]] as [number,number][]}
     const n={...network,edges:[edge],signals:[]}
@@ -253,6 +316,40 @@ describe('world physics', () => {
     const s=run(w,9)
     expect(s.metrics.reroutes).toBe(1)
     expect(s.vehicles.find(v=>v.id==='adopter')!.route).toEqual(['ab','bd','dc'])
+  })
+  it('reroutes a stopped head before signal feasibility without crossing its red approach', () => {
+    const w=blockedRerouteWorld()
+    const approach=run(w,22)
+    expect(approach.vehicles.find(v=>v.id==='driver')).toMatchObject({edgeId:'ab',position:20,route:['ab','bc'],reroutes:0})
+    const stopped=run(w,1)
+    expect(stopped.vehicles.find(v=>v.id==='driver')).toMatchObject({edgeId:'ab',position:30,route:['ab','bc'],reroutes:0})
+    const diverted=run(w,1)
+    expect(diverted.vehicles.find(v=>v.id==='driver')).toMatchObject({edgeId:'ab',position:30,route:['ab','be','ec'],reroutes:1})
+    expect(diverted.signals[0]).toMatchObject({phase:1,stage:'green'})
+    const stages=new Set<string>()
+    let crossed=false
+    for(let t=0;t<20;t++){
+      const before=snapshotWorld(w)
+      stepWorld(w)
+      const s=snapshotWorld(w),signal=s.signals[0]!
+      stages.add(signal.stage)
+      const driver=s.vehicles.find(v=>v.id==='driver'),previous=before.vehicles.find(v=>v.id==='driver')
+      if(driver?.edgeId==='be'&&previous?.edgeId==='ab'){
+        crossed=true
+        expect(signal).toMatchObject({phase:0,stage:'green'})
+      }
+      if(signal.stage!=='green')expect(driver?.edgeId).toBe('ab')
+    }
+    expect(crossed).toBe(true)
+    expect(stages.has('amber')).toBe(true)
+    expect(stages.has('all-red')).toBe(true)
+  })
+  it.each([
+    {name:'a driver who does not adopt route advice',adopts:false,detourLength:50},
+    {name:'a driver whose detour has no predicted saving',adopts:true,detourLength:11000},
+  ])('does not divert $name while its receiver is full', ({adopts,detourLength}) => {
+    const s=run(blockedRerouteWorld(adopts,detourLength),120)
+    expect(s.vehicles.find(v=>v.id==='driver')).toMatchObject({edgeId:'ab',position:30,route:['ab','bc'],reroutes:0})
   })
   it('accounts system exposure consistently with completed trip times after draining', () => {
     const s=run(createWorld(scenario(demand(3)),'fixed',network),100)

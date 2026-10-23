@@ -100,6 +100,8 @@ export function useSimulation() {
         normalDischargeHeadwaySeconds: 2, h3Resolution: 10, forecastHorizonSeconds: 30,
         map: 'OpenStreetMap geometry, simplified illustrative traffic operations',
         comparison: 'Identical demand and events; only signal and routing policies differ',
+        controller: 'Rule-based adaptive control; no trained reinforcement learning policy',
+        fleet: 'Mixed visual classes use common 7.5m single-lane storage; no class-specific dynamics',
       },
       ...current.current,
     }
