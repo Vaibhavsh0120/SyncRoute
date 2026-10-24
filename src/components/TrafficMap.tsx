@@ -336,6 +336,7 @@ function updateMap(map: LibreMap, props: TrafficMapProps, reducedMotion: boolean
     map.setPaintProperty('roads', 'line-color', props.viewMode === '3d' ? '#738083' : '#fff')
     map.setPaintProperty('roads-casing', 'line-color', props.viewMode === '3d' ? '#c7c9bd' : '#d3dbe5')
     map.setPaintProperty('congestion-line', 'line-opacity', props.viewMode === '3d' ? .45 : .7)
+    map.setPaintProperty('hex-fill', 'fill-opacity', ['match', ['get', 'category'], 'empty', .005, 'green', .025, 'yellow', props.viewMode === '3d' ? .20 : .12, props.viewMode === '3d' ? .28 : .18])
   }
   if (previous?.snapshot.mode !== props.snapshot.mode) map.setPaintProperty('route-line', 'line-color', props.snapshot.mode === 'fixed' ? '#08a9d1' : '#7652dc')
   LAST_MAP_STATE.set(map, props)
