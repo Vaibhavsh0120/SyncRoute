@@ -77,7 +77,7 @@ and other buildings use stone and residential neutrals. Roofs use concrete greys
 These colours and classifications do not assert the real appearance, materials,
 heritage status, or use of individual properties.
 
-`scenery.geojson` contains 3,911 lightweight polygon features (about 1.29 MB):
+`scenery.geojson` contains 3,968 lightweight polygon features (about 1.34 MB):
 
 - 560 trees: 320 within actual OSM parks and 240 alongside mapped streets.
   Their 560 trunks and 1,120 layered crowns use varied sizes and green tones.
@@ -99,6 +99,15 @@ heritage status, or use of individual properties.
   boundaries are sampled at intervals no greater than 1 m against the full
   building polygon, including courtyard holes. Heights and equipment choices
   do not assert the real installation on any property.
+- A large Indian tricolour landmark at Central Park's polygon centroid
+  (77.2197100, 28.6328058), aligned with the existing illustrative seating court.
+  Its stepped base, tapered 63 m pole and 1 m finial support 24 by 16 m cloth
+  with equal saffron, white and green horizontal bands and a navy 24-spoke
+  Ashoka Chakra. The wheel uses 48 thin, merged extrusion slices, including
+  its rim and hub, visible from both sides. The full landmark adds 57 static
+  features in the existing scenery layer, with no animation, texture or extra
+  rendering layer. Placement, proportions and dimensions are illustrative;
+  they do not assert the surveyed location or appearance of the real flagpole.
 
 All scenic features carry `source`: `osm-footway` means a surface follows a
 mapped path alignment; `illustrative` describes assumed scenery. Even a mapped
@@ -107,7 +116,7 @@ Carriageway exclusion buffers are visual estimates by road class (3-9 m from
 centerline for ordinary motor roads), not surveyed widths. Underground/tunnel
 paths do not create surface scenery. The generator asserts closed building
 rings, finite scenery coordinates, positive extrusion ranges, tree clearance,
-and 1,900 park/roof containment checks before writing either output.
+and 2,239 park/roof/landmark containment checks before writing either output.
 
 ## Expanded operational road scope
 

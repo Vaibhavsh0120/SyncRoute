@@ -494,10 +494,97 @@ for n in order:
     if added:
         roof_count += 1
 
+# Restore the tall tricolour landmark at the centre of Central Park. Position,
+# pole proportions and cloth dimensions are illustrative, not surveyed data.
+# Use the existing seating court's anchor so the stepped base stays clear of
+# the surrounding benches and trees. All geometry uses the existing static
+# extrusion layer; the landmark needs no animation, texture or new draw layer.
+central_park = next(park_rings[n] for n, feature in enumerate(parks['features'])
+                    if feature['properties'].get('osm_id') == '164675825')
+flag_center = polygon_anchor(central_park)
+assert flag_center is not None and not in_building(flag_center)
+flag_start = len(features)
+for radius, base, top, color in [(4.6, .18, .65, '#e3dfd5'),
+                                  (3.4, .65, 1.25, '#f1ede3'),
+                                  (2.3, 1.25, 1.9, '#faf7ee')]:
+    ring = circle(flag_center, radius, 12)
+    polygon(ring, 'flagpole-plinth', top, base, color)
+    detail_checks.append((ring, central_park))
+polygon(circle(flag_center, .65, 10), 'flagpole', 46, 1.9, '#b6c1c7')
+polygon(circle(flag_center, .47, 10), 'flagpole', 63, 46, '#dce3e5')
+polygon(circle(flag_center, .72, 10), 'flagpole-finial', 64, 63, '#e3b954')
+
+flag_width, flag_height, flag_top = 24, 16, 62.5
+flag_angle = math.radians(4)
+flag_axis = (math.cos(flag_angle), math.sin(flag_angle))
+flag_origin = (flag_center[0] + .55 * flag_axis[0], flag_center[1] + .55 * flag_axis[1])
+
+
+def flag_strip(left, right, depth=.35):
+    p = (flag_origin[0] + (left + right) / 2 * flag_axis[0],
+         flag_origin[1] + (left + right) / 2 * flag_axis[1])
+    return rectangle(p, right - left, depth, flag_angle)
+
+
+cloth = flag_strip(0, flag_width)
+assert contained(cloth, central_park)
+band = flag_height / 3
+for n, (kind, color) in enumerate([('flag-saffron', '#ff9933'),
+                                   ('flag-white', '#ffffff'), ('flag-green', '#138808')]):
+    polygon(cloth, kind, flag_top - n * band, flag_top - (n + 1) * band, color)
+
+# A real 24-spoke Chakra in the vertical cloth plane. Horizontal slices merge
+# the rim, hub and spokes into just 48 static MultiPolygon features. Slightly
+# thicker than the white band, the navy wheel is visible from either side.
+wheel_radius, rim_inner, hub_radius = 2.15, 1.98, .24
+wheel_x, wheel_z = flag_width / 2, flag_top - flag_height / 2
+spokes = []
+for n in range(24):
+    angle = math.tau * n / 24
+    c, s = math.cos(angle), math.sin(angle)
+    spokes.append([(r * c - t * s, r * s + t * c)
+                   for r, t in [(.1, -.06), (rim_inner, -.06), (rim_inner, .06), (.1, .06), (.1, -.06)]])
+for row in range(48):
+    lower = -wheel_radius + row * wheel_radius / 24
+    upper = lower + wheel_radius / 24
+    z = (lower + upper) / 2
+    outer = math.sqrt(wheel_radius ** 2 - z ** 2)
+    inner = math.sqrt(max(0, rim_inner ** 2 - z ** 2))
+    intervals = [(-outer, -inner), (inner, outer)] if inner else [(-outer, outer)]
+    if abs(z) < hub_radius:
+        hub = math.sqrt(hub_radius ** 2 - z ** 2)
+        intervals.append((-hub, hub))
+    for spoke in spokes:
+        crossings = [a[0] + (b[0] - a[0]) * (z - a[1]) / (b[1] - a[1])
+                     for a, b in zip(spoke, spoke[1:]) if (a[1] > z) != (b[1] > z)]
+        if crossings:
+            intervals.append((min(crossings), max(crossings)))
+    merged = []
+    for left, right in sorted(intervals):
+        if merged and left <= merged[-1][1] + .005:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], right))
+        else:
+            merged.append((left, right))
+    rings = [flag_strip(wheel_x + left, wheel_x + right, .43) for left, right in merged]
+    features.append({'type': 'Feature', 'properties': {'kind': 'flag-chakra',
+                     'height': round(wheel_z + upper, 2), 'base': round(wheel_z + lower, 2),
+                     'color': '#000080', 'source': 'illustrative'},
+                     'geometry': {'type': 'MultiPolygon', 'coordinates':
+                                  [[[lonlat(p) for p in ring]] for ring in rings]}})
+    detail_checks.extend((ring, central_park) for ring in rings)
+
+
+def feature_rings(feature):
+    geometry = feature['geometry']
+    return (geometry['coordinates'] if geometry['type'] == 'Polygon' else
+            [ring for polygon in geometry['coordinates'] for ring in polygon])
+
+
 assert 250 <= len(tree_positions) <= 560, len(tree_positions)
 assert all(not in_building(p) and clear_street(p) for p in tree_positions)
 assert all(contained(ring, polygon) for ring, polygon in detail_checks)
-assert all(math.isfinite(value) for f in features for ring in f['geometry']['coordinates'] for p in ring for value in p)
+assert all(math.isfinite(value) for f in features for ring in feature_rings(f) for p in ring for value in p)
+assert all(len(ring) >= 4 and ring[0] == ring[-1] for f in features for ring in feature_rings(f))
 assert all(f['properties']['height'] > f['properties']['base'] >= 0 for f in features)
 assert all(f['properties']['height'] > f['properties']['base'] >= 0 for f in buildings['features'])
 assert all(len(ring) >= 4 and ring[0] == ring[-1] for f in buildings['features'] for ring in f['geometry']['coordinates'])
@@ -512,6 +599,8 @@ print(json.dumps({'buildings': len(buildings['features']),
                   'park_path_strips': park_path_count, 'street_lamps': len(lamp_positions),
                   'park_benches': len(park_seats), 'courtyard_plazas': courtyard_count,
                   'roof_buildings': roof_count, 'roof_details': roof_detail_count,
+                  'flag_center': lonlat(flag_center), 'flag_spokes': len(spokes),
+                  'flag_features': len(features) - flag_start,
                   'contained_detail_checks': len(detail_checks),
                   'features': dict(Counter(f['properties']['kind'] for f in features)),
                   'facades': dict(Counter(f['properties']['facade'] for f in buildings['features'])),

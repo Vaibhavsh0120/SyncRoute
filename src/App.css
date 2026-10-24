@@ -303,6 +303,9 @@
 @media (max-width: 359px) { .map-toolbar .panel-heading h2 { max-width: 115px; line-height: 1.3; } .map-controls { gap: 4px; } .hex-toggle { font-size: 9px; } .expand-map-button { font-size: 9px; padding-inline: 6px; } .expand-map-button svg { width: 12px; height: 12px; } }
 
 .inspector .inspector-strategy { margin: -4px 0 12px; color: var(--ink-secondary); font-size: 11px; }
+.simulation-error { color: #f2bc78; padding: 14px 0; font-size: 13px; line-height: 1.5; }
+.network-count { right: 70px; }
+@media (max-width: 760px) { .network-count { right: 12px; bottom: 226px; } }
 .inspector-object-id { display: block; font-size: 11px; font-weight: 400; color: var(--ink-secondary); overflow-wrap: anywhere; margin-top: 5px; }
 .inspector .scenario-facts dd { text-align: right; overflow-wrap: anywhere; min-width: 0; max-width: 65%; }
 .model-notes { margin-top: 18px; }

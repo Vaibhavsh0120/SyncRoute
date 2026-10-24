@@ -81,3 +81,5 @@ The running adaptive controller uses explicit pressure, storage and preventive r
 Read the completed, sourced [pitch](docs/PITCH.md), [MARL and real-world pilot roadmap](docs/REAL_WORLD_ROADMAP.md), and [final review](docs/PROJECT_REVIEW.md). The proposed next stage is cooperative multi-agent reinforcement learning with one agent per junction, centralised offline training, local execution and an independent signal safety filter.
 
 The inspector supports vehicles, traffic cells and signals, including empty cells and vehicles that have completed their trips. Use **Reset view** to restore the city camera. Weather, active restriction and ambulance state are visible in Traffic Pattern. **How the controller works** explains the current model and proposed next stage.
+
+The bottom-right **2D / 3D** button switches both ways while preserving location and zoom. Traffic advances in a local worker; camera gestures use lighter vehicle symbols and restore dimensional models when settled. Central Park includes its large Indian flag. See [map performance evidence](docs/MAP_PERFORMANCE.md) and the [Gamma presentation prompt](docs/GAMMA_PROMPT.md).

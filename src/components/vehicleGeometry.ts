@@ -1,5 +1,6 @@
 import type { Feature, FeatureCollection, Point, Polygon } from 'geojson'
 import type { VehicleKind } from '../domain/types'
+import type { VehicleDetail } from '../lib/mapRendering'
 
 interface VehicleProperties { id: string; kind: VehicleKind; bearing: number; color: string }
 interface VehiclePart { x: number; y: number; width: number; length: number; base: number; height: number; color: string; chamfer?: number; shadow?: boolean }
@@ -68,10 +69,14 @@ function vehicleParts(kind: VehicleKind, body: string): VehiclePart[] {
   ]
 }
 
-function prepareParts(kind: VehicleKind, body: string): PreparedPart[] {
+function prepareParts(kind: VehicleKind, body: string, detail: VehicleDetail): PreparedPart[] {
   const shadowLength = kind === 'bus' ? 10.6 : kind === 'ambulance' ? 5.6 : kind === 'bike' ? 2.5 : 4.7
   const shadowWidth = kind === 'bus' ? 2.7 : kind === 'bike' ? .9 : 2.1
-  const parts: VehiclePart[] = [{ x: .45, y: -.45, width: shadowWidth, length: shadowLength, base: 0, height: 0, color: '#233941', chamfer: .2, shadow: true }, ...vehicleParts(kind, body)]
+  const compact = kind === 'bike' ? [part(0, 0, .45, 2.35, .1, .75, TYRE), part(0, 0, .65, .7, .75, 1.6, '#efaa3c')]
+    : kind === 'bus' ? [part(0, 0, 2.45, 10.3, .3, 1.6, '#4e9568'), part(0, 0, 2.36, 9.95, 1.6, 2.65, GLASS), part(0, -.15, 2.42, 9.9, 2.65, 2.94, '#cfe0c8')]
+      : kind === 'ambulance' ? [part(0, 0, 1.96, 5.3, .3, 2.1, '#f8f6eb'), part(0, 1.5, 1.75, 1, 1.3, 2.15, GLASS), part(0, -.5, .3, 1.2, 2.1, 2.2, '#d84d55'), part(0, -.5, 1.1, .3, 2.1, 2.2, '#d84d55')]
+        : [part(0, 0, 1.8, 4.4, .28, .97, body), part(0, -.15, 1.6, 2.5, .97, 1.45, GLASS), part(0, -.25, 1.45, 1.4, 1.45, 1.52, body)]
+  const parts: VehiclePart[] = [{ x: .45, y: -.45, width: shadowWidth, length: shadowLength, base: 0, height: 0, color: '#233941', chamfer: .2, shadow: true }, ...(detail === 'compact' ? compact : vehicleParts(kind, body))]
   return parts.map(p => {
     const x0 = p.x - p.width / 2, x1 = p.x + p.width / 2
     const y0 = p.y - p.length / 2, y1 = p.y + p.length / 2
@@ -85,14 +90,14 @@ function prepareParts(kind: VehicleKind, body: string): PreparedPart[] {
 const PARTS = new Map<string, PreparedPart[]>()
 
 /** Build one batched source, rather than a DOM marker or WebGL object per car. */
-export function vehicleGeometry(points: FeatureCollection<Point, VehicleProperties>): FeatureCollection<Polygon> {
+export function vehicleGeometry(points: FeatureCollection<Point, VehicleProperties>, detail: VehicleDetail = 'full'): FeatureCollection<Polygon> {
   const features: Feature<Polygon>[] = []
   for (const vehicle of points.features) {
     const { id, kind, bearing, color } = vehicle.properties
-    const key = `${kind}:${color}`
+    const key = `${kind}:${color}:${detail}`
     let parts = PARTS.get(key)
     if (!parts) {
-      parts = prepareParts(kind, color)
+      parts = prepareParts(kind, color, detail)
       PARTS.set(key, parts)
     }
     const radians = bearing * Math.PI / 180

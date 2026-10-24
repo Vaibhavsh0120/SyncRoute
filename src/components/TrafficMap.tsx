@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import * as maplibregl from 'maplibre-gl'
 import type { GeoJSONSource, Map as LibreMap } from 'maplibre-gl'
 import type { ExpressionSpecification } from '@maplibre/maplibre-gl-style-spec'
@@ -10,7 +10,9 @@ import type { CameraState, Coordinate, RoutePreview, Selection, SimulationSnapsh
 import { coordinateAt, NETWORK, networkGeometry } from '../data/network'
 import { vehicleGeometry } from './vehicleGeometry'
 import type { VehicleProperties } from './vehicleGeometry'
-import { interpolationFrameDue } from '../lib/playback'
+import { vehicleDetail, vehicleFrameDue } from '../lib/mapRendering'
+import type { VehicleDetail } from '../lib/mapRendering'
+import { MapNavigationControl } from './MapNavigationControl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import './TrafficMap.css'
 
@@ -23,6 +25,7 @@ export interface TrafficMapProps {
   snapshot: SimulationSnapshot
   previousSnapshot?: SimulationSnapshot
   interpolation: number
+  motion?: { current: { interpolation: number; playing: boolean; speed: number } }
   viewMode: '2d' | '3d'
   showHexagons: boolean
   showRoutes?: boolean
@@ -36,7 +39,7 @@ export interface TrafficMapProps {
 const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] }
 const EDGE_BY_ID = new Map(NETWORK.edges.map(edge => [edge.id, edge]))
 const CAR_COLORS = ['#edf3f6', '#d65b57', '#efbd3f', '#3e8abb', '#38a8ad', '#435166']
-const THREE_D_LAYERS = ['buildings-shadow', 'buildings-3d', 'building-facades', 'building-roofs', 'scenery-shadow', 'tree-trunks', 'tree-crowns', 'roof-details', 'road-markings', 'park-landscape-3d', 'vehicle-shadows', 'vehicle-bodies']
+const THREE_D_LAYERS = ['buildings-shadow', 'building-facades', 'building-roofs', 'scenery-shadow', 'tree-trunks', 'tree-crowns', 'roof-details', 'roof-equipment', 'road-markings', 'park-landscape-3d', 'vehicle-shadows', 'vehicle-bodies']
 const [SW, NE] = NETWORK.bounds
 const CELLS = polygonToCells([[SW[1], SW[0]], [SW[1], NE[0]], [NE[1], NE[0]], [NE[1], SW[0]], [SW[1], SW[0]]], 10)
 const GRID = CELLS.map(id => ({
@@ -265,42 +268,61 @@ function setSource(map: LibreMap, id: string, data: FeatureCollection) {
 }
 
 const LAST_MAP_STATE = new WeakMap<LibreMap, TrafficMapProps>()
-const LAST_VEHICLE_FRAME = new WeakMap<LibreMap, number>()
+const MOVING_MAPS = new WeakSet<LibreMap>()
+const LAST_SOURCE_KEYS = new WeakMap<LibreMap, { hex?: string; congestion?: string; route?: string }>()
+const LAST_VEHICLE_FRAME = new WeakMap<LibreMap, { at: number; snapshot: SimulationSnapshot; interpolation: number; detail: VehicleDetail; moving: boolean }>()
 
-function updateMap(map: LibreMap, props: TrafficMapProps, reducedMotion: boolean) {
+function updateMap(map: LibreMap, props: TrafficMapProps, reducedMotion: boolean, force = false) {
   const previous = LAST_MAP_STATE.get(map)
+  const keys = LAST_SOURCE_KEYS.get(map) ?? {}
   if (previous?.snapshot !== props.snapshot) {
-    setSource(map, 'hexagons', hexData(props.snapshot))
-    setSource(map, 'congestion', {
-      type: 'FeatureCollection',
-      features: props.snapshot.edges.map(stat => ({ type: 'Feature', properties: { category: stat.category, blocked: stat.blocked }, geometry: { type: 'LineString', coordinates: EDGE_BY_ID.get(stat.id)?.coordinates ?? [] } })),
-    })
+    // Geometry never changes for these overlays. Do not retile unchanged states.
+    const hexKey = props.snapshot.hexStats.map(s => `${s.id}:${s.category}`).join('|')
+    if (keys.hex !== hexKey) { setSource(map, 'hexagons', hexData(props.snapshot)); keys.hex = hexKey }
+    const congestionKey = props.snapshot.edges.map(s => `${s.category}:${s.blocked}`).join('|')
+    if (keys.congestion !== congestionKey) {
+      setSource(map, 'congestion', {
+        type: 'FeatureCollection',
+        features: props.snapshot.edges.map(stat => ({ type: 'Feature', properties: { category: stat.category, blocked: stat.blocked }, geometry: { type: 'LineString', coordinates: EDGE_BY_ID.get(stat.id)?.coordinates ?? [] } })),
+      })
+      keys.congestion = congestionKey
+    }
   }
   const now = performance.now()
-  const changedSnapshot = previous?.snapshot !== props.snapshot || previous?.previousSnapshot !== props.previousSnapshot
-  // Snapshot changes always render, including while paused. Interpolation is
-  // capped at 30 fps so the two maps do not rebuild GeoJSON at display refresh.
-  if (changedSnapshot || previous?.viewMode !== props.viewMode || (!reducedMotion && interpolationFrameDue(props.interpolation, previous?.interpolation, now - (LAST_VEHICLE_FRAME.get(map) ?? 0)))) {
+  const lastFrame = LAST_VEHICLE_FRAME.get(map)
+  const moving = MOVING_MAPS.has(map)
+  const detail = vehicleDetail(map.getZoom(), moving)
+  const changed = lastFrame?.snapshot !== props.snapshot || (!reducedMotion && lastFrame?.interpolation !== props.interpolation)
+  if (force || !lastFrame || lastFrame.detail !== detail || vehicleFrameDue({ changed, elapsed: now - lastFrame.at, moving, playing: props.motion?.current.playing ?? false })) {
     const vehicles = vehicleData(props, reducedMotion)
-    setSource(map, 'vehicles', vehicles)
-    if (props.viewMode === '3d') setSource(map, 'vehicle-models', vehicleGeometry(vehicles))
-    LAST_VEHICLE_FRAME.set(map, now)
+    // The overview needs point symbols; the city needs dimensional geometry.
+    // Only the ambulance halo consumes point data in the city.
+    setSource(map, 'vehicles', props.viewMode === '2d' || moving ? vehicles : { ...vehicles, features: vehicles.features.filter(v => v.properties.kind === 'ambulance') })
+    if (props.viewMode === '3d' && !moving) setSource(map, 'vehicle-models', vehicleGeometry(vehicles, detail))
+    if (lastFrame?.moving !== moving) {
+      map.setLayoutProperty('vehicle-bodies', 'visibility', props.viewMode === '3d' && !moving ? 'visible' : 'none')
+      map.setLayoutProperty('vehicle-shadows', 'visibility', props.viewMode === '3d' && !moving ? 'visible' : 'none')
+      map.setLayoutProperty('vehicles', 'visibility', props.viewMode === '2d' || moving ? 'visible' : 'none')
+    }
+    LAST_VEHICLE_FRAME.set(map, { at: now, snapshot: props.snapshot, interpolation: props.interpolation, detail, moving })
   }
   if (!previous || previous.snapshot !== props.snapshot || previous.showRoutes !== props.showRoutes || previous.route !== props.route) {
     const routeFeatures: GeoJSON.Feature[] = []
-    if (props.route?.coordinates?.length) {
-      routeFeatures.push({ type: 'Feature', properties: { id: 'active-route' }, geometry: { type: 'LineString', coordinates: props.route.coordinates } })
-    } else if (props.showRoutes) {
-      routeFeatures.push(...activeRoutes(props.snapshot).features)
+    const routeKey = props.route?.edgeIds.join('|') ?? (props.showRoutes ? [...new Set(props.snapshot.vehicles.flatMap(v => v.route.slice(v.routeIndex)))].sort().join('|') : '')
+    if (keys.route !== routeKey) {
+      if (props.route?.coordinates?.length) routeFeatures.push({ type: 'Feature', properties: { id: 'active-route' }, geometry: { type: 'LineString', coordinates: props.route.coordinates } })
+      else if (props.showRoutes) routeFeatures.push(...activeRoutes(props.snapshot).features)
+      setSource(map, 'route', { type: 'FeatureCollection', features: routeFeatures })
+      keys.route = routeKey
     }
-    setSource(map, 'route', { type: 'FeatureCollection', features: routeFeatures })
   }
+  LAST_SOURCE_KEYS.set(map, keys)
   if (previous?.showHexagons !== props.showHexagons || previous.viewMode !== props.viewMode) {
     const hexVis = props.showHexagons ? 'visible' : 'none'
     for (const id of ['hex-fill', 'hex-outline']) {
       if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', hexVis)
     }
-    if (map.getLayer('hex-3d')) map.setLayoutProperty('hex-3d', 'visibility', props.showHexagons && props.viewMode === '3d' ? 'visible' : 'none')
+    if (map.getLayer('hex-3d')) map.setLayoutProperty('hex-3d', 'visibility', 'none')
   }
   if (previous?.viewMode !== props.viewMode) {
     for (const id of THREE_D_LAYERS) {
@@ -336,7 +358,6 @@ export function TrafficMap(props: TrafficMapProps) {
     if (!container.current) return
     reducedMotion.current = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     let map: LibreMap
-    let cameraFrame = 0
     const labels: maplibregl.Marker[] = []
     const loadTimeout = window.setTimeout(() => {
       setError('The interactive map could not finish loading. The local street network remains visible. You can retry below.')
@@ -353,7 +374,8 @@ export function TrafficMap(props: TrafficMapProps) {
         maxBounds: [[77.201, 28.617], [77.236, 28.648]],
         attributionControl: false,
         renderWorldCopies: false,
-        canvasContextAttributes: { antialias: true },
+        pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5),
+        canvasContextAttributes: { antialias: false },
         style: {
           version: 8,
           light: { anchor: 'map', color: '#fff5df', intensity: .48, position: [1.5, 225, 35] },
@@ -391,7 +413,8 @@ export function TrafficMap(props: TrafficMapProps) {
             { id: 'park-landscape-3d', type: 'fill-extrusion', source: 'scenery', filter: ['in', ['get', 'kind'], ['literal', ['park-lawn', 'park-path', 'water-feature', 'park-plinth', 'park-amphitheater', 'flagpole-plinth', 'flagpole', 'flagpole-finial', 'flag-saffron', 'flag-white', 'flag-chakra', 'flag-green']]], layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['get', 'color'], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-opacity': 1, 'fill-extrusion-vertical-gradient': false } },
             { id: 'buildings-3d', type: 'fill-extrusion', source: 'buildings', layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['coalesce', ['get', 'facadeColor'], '#e5d8bf'], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': ['coalesce', ['get', 'base'], 0], 'fill-extrusion-opacity': 1, 'fill-extrusion-vertical-gradient': true } },
             { id: 'building-roofs', type: 'fill-extrusion', source: 'buildings', layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['coalesce', ['get', 'roofColor'], '#b8bab4'], 'fill-extrusion-height': ['+', ['get', 'height'], .4], 'fill-extrusion-base': ['get', 'height'], 'fill-extrusion-opacity': 1, 'fill-extrusion-vertical-gradient': false } },
-            { id: 'roof-details', type: 'fill-extrusion', source: 'scenery', filter: ['in', ['get', 'kind'], ['literal', ['roof-detail', 'street-furniture', 'courtyard-plaza']]], layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['get', 'color'], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-opacity': 1 } },
+            { id: 'roof-details', type: 'fill-extrusion', source: 'scenery', filter: ['in', ['get', 'kind'], ['literal', ['street-furniture', 'courtyard-plaza']]], layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['get', 'color'], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-opacity': 1 } },
+            { id: 'roof-equipment', type: 'fill-extrusion', source: 'scenery', minzoom: 16.3, filter: ['==', ['get', 'kind'], 'roof-detail'], layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['get', 'color'], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-opacity': 1 } },
             { id: 'tree-trunks', type: 'fill-extrusion', source: 'scenery', filter: ['==', ['get', 'kind'], 'tree-trunk'], layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['get', 'color'], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-opacity': 1 } },
             { id: 'tree-crowns', type: 'fill-extrusion', source: 'scenery', filter: ['==', ['get', 'kind'], 'tree-crown'], layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['get', 'color'], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-opacity': 1, 'fill-extrusion-vertical-gradient': true } },
           ],
@@ -401,7 +424,7 @@ export function TrafficMap(props: TrafficMapProps) {
       map.scrollZoom.enable()
       map.scrollZoom.setWheelZoomRate(.002)
       map.scrollZoom.setZoomRate(1 / 110)
-      map.addControl(new maplibregl.NavigationControl({ showCompass: true, visualizePitch: true }), 'bottom-right')
+      map.addControl(new MapNavigationControl({ showCompass: latest.current.viewMode === '3d', visualizePitch: true }), 'bottom-right')
       map.on('load', () => {
         window.clearTimeout(loadTimeout)
         CAR_COLORS.forEach((color, i) => map.addImage(`car-${i}`, carSprite(false, color), { pixelRatio: 2 }))
@@ -409,7 +432,7 @@ export function TrafficMap(props: TrafficMapProps) {
         map.addImage('bike', fleetSprite('bike'), { pixelRatio: 2 })
         map.addImage('bus', fleetSprite('bus'), { pixelRatio: 2 })
         for (const facade of ['heritage', 'stone', 'glass', 'residential']) map.addImage(`facade-${facade}`, facadeSprite(facade), { pixelRatio: 2 })
-        map.addLayer({ id: 'building-facades', type: 'fill-extrusion', source: 'buildings', layout: { visibility: 'none' }, paint: { 'fill-extrusion-pattern': ['concat', 'facade-', ['coalesce', ['get', 'facade'], 'heritage']], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': ['coalesce', ['get', 'base'], 0], 'fill-extrusion-opacity': .8, 'fill-extrusion-vertical-gradient': true } }, 'building-roofs')
+        map.addLayer({ id: 'building-facades', type: 'fill-extrusion', source: 'buildings', layout: { visibility: 'none' }, paint: { 'fill-extrusion-pattern': ['concat', 'facade-', ['coalesce', ['get', 'facade'], 'heritage']], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': ['coalesce', ['get', 'base'], 0], 'fill-extrusion-opacity': 1, 'fill-extrusion-vertical-gradient': true } }, 'building-roofs')
         map.addLayer({ id: 'vehicle-shadows', type: 'fill', source: 'vehicle-models', filter: ['==', ['get', 'part'], 'shadow'], layout: { visibility: 'none' }, paint: { 'fill-color': '#21353d', 'fill-opacity': .26 } }, 'park-landscape-3d')
         map.addLayer({ id: 'vehicle-bodies', type: 'fill-extrusion', source: 'vehicle-models', filter: ['!=', ['get', 'part'], 'shadow'], layout: { visibility: 'none' }, paint: { 'fill-extrusion-color': ['get', 'color'], 'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-opacity': 1, 'fill-extrusion-vertical-gradient': false } })
         map.addLayer({ id: 'ambulance-halo', type: 'circle', source: 'vehicles', filter: ['==', ['get', 'kind'], 'ambulance'], paint: { 'circle-radius': 12, 'circle-color': '#e64659', 'circle-opacity': .23, 'circle-stroke-width': 1.5, 'circle-stroke-color': '#e64659' } })
@@ -453,18 +476,14 @@ export function TrafficMap(props: TrafficMapProps) {
         const feature = map.queryRenderedFeatures(event.point, { layers })[0]
         if (feature?.properties?.id) latest.current.onSelect({ type: 'hex', id: String(feature.properties.id), mode: latest.current.snapshot.mode })
       })
-      map.on('move', () => {
-        if (applyingCamera.current || cameraFrame) return
-        cameraFrame = requestAnimationFrame(() => {
-          cameraFrame = 0
-          const camera = cameraOf(map)
-          if (camerasDiffer(camera, latest.current.camera)) latest.current.onCameraChange(camera)
-        })
+      map.on('movestart', () => {
+        MOVING_MAPS.add(map)
+        if (map.getLayer('vehicle-bodies')) updateMap(map, { ...latest.current, interpolation: latest.current.motion?.current.interpolation ?? latest.current.interpolation }, reducedMotion.current, true)
       })
       map.on('moveend', () => {
+        MOVING_MAPS.delete(map)
+        if (map.getLayer('vehicle-bodies')) updateMap(map, { ...latest.current, interpolation: latest.current.motion?.current.interpolation ?? latest.current.interpolation }, reducedMotion.current, true)
         if (applyingCamera.current) return
-        cancelAnimationFrame(cameraFrame)
-        cameraFrame = 0
         const camera = cameraOf(map)
         if (camerasDiffer(camera, latest.current.camera)) latest.current.onCameraChange(camera)
       })
@@ -477,7 +496,6 @@ export function TrafficMap(props: TrafficMapProps) {
       })
     } catch {
       window.clearTimeout(loadTimeout)
-      cancelAnimationFrame(cameraFrame)
       queueMicrotask(() => setError('Your browser could not start the 3D map. The local street network is shown below. Enable WebGL to explore the full map.'))
       return
     }
@@ -485,7 +503,6 @@ export function TrafficMap(props: TrafficMapProps) {
     resize.observe(container.current)
     return () => {
       window.clearTimeout(loadTimeout)
-      cancelAnimationFrame(cameraFrame)
       resize.disconnect()
       labels.forEach(label => label.remove())
       signalMarkers.current.forEach(signal => signal.marker.remove())
@@ -500,6 +517,20 @@ export function TrafficMap(props: TrafficMapProps) {
     if (!map || !ready) return
     updateMap(map, props, reducedMotion.current)
   }, [props, ready])
+
+  useEffect(() => {
+    if (!ready || !props.motion) return
+    let frame = 0
+    const animate = () => {
+      const motion = latest.current.motion?.current
+      if (motion?.playing && !document.hidden && instance.current) {
+        updateMap(instance.current, { ...latest.current, interpolation: motion.interpolation }, reducedMotion.current)
+      }
+      frame = requestAnimationFrame(animate)
+    }
+    frame = requestAnimationFrame(animate)
+    return () => cancelAnimationFrame(frame)
+  }, [props.motion, ready])
 
   useEffect(() => {
     if (!ready) return
@@ -555,5 +586,5 @@ function FallbackNetwork(props: TrafficMapProps) {
   </svg>
 }
 
-export default TrafficMap
+export default memo(TrafficMap)
 

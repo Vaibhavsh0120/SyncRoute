@@ -12,6 +12,16 @@ const extent = (collection: FeatureCollection<Polygon>, axis: 0 | 1) => {
 }
 
 describe('volumetric traffic fleet', () => {
+  it('uses substantially fewer parts while retaining every vehicle identity and size in compact views', () => {
+    for (const kind of ['car', 'bike', 'bus', 'ambulance'] as const) {
+      const full = vehicleGeometry(make(kind))
+      const compact = vehicleGeometry(make(kind), 'compact')
+      expect(compact.features.length).toBeLessThan(full.features.length / 2)
+      expect(new Set(compact.features.map(f => f.properties?.id))).toEqual(new Set(['fleet-1']))
+      expect(extent(compact, 1)).toBeCloseTo(extent(full, 1), kind === 'bike' ? 0 : 2)
+      expect(compact.features.every(f => f.geometry.coordinates[0][0].every(Number.isFinite))).toBe(true)
+    }
+  })
   it('emits closed finite parts and nonnegative height ranges for every vehicle kind', () => {
     for (const kind of ['car', 'bike', 'bus', 'ambulance'] as const) {
       const output = vehicleGeometry(make(kind, 37))

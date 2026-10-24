@@ -8,8 +8,13 @@
 .traffic-map .maplibregl-ctrl-group { border: 1px solid #d9e1eb; box-shadow: 0 2px 6px #183f7020; border-radius: 7px; }
 .traffic-map .maplibregl-ctrl-bottom-right { right: 0; bottom: 8px; }
 .traffic-map .maplibregl-ctrl-group button { width: 29px; height: 29px; }
+.traffic-map--3d .maplibregl-ctrl-group button { width: 44px; height: 44px; }
+.traffic-map .traffic-map-view-toggle .maplibregl-ctrl-icon { display: none; }
+.traffic-map-view-label { display: grid; place-items: center; height: 100%; color: #34506b; font: 650 10px/1 Arial, sans-serif; }
+.traffic-map .traffic-map-view-toggle:focus-visible { outline: 3px solid #7565d7; outline-offset: 2px; }
 .traffic-map-reset { position: absolute; z-index: 3; right: .625rem; bottom: 7.375rem; display: flex; align-items: center; gap: .375rem; min-height: 2rem; padding: .375rem .5625rem; border: .0625rem solid #d2dce6; border-radius: .4375rem; background: #fffffff5; box-shadow: 0 .125rem .375rem #183f701a; color: #34506b; font: 500 .6875rem/1.2 Arial, sans-serif; cursor: pointer; }
 .traffic-map-reset svg { block-size: 1cap; inline-size: 1cap; }
+.traffic-map-reset { bottom: 10.375rem; min-height: 2.75rem; }
 .traffic-map-reset:focus-visible { outline: .1875rem solid #7565d7; outline-offset: .125rem; }
 @media (hover: hover) and (pointer: fine) { .traffic-map-reset:hover { background: #edf2f7; } }
 .traffic-map .maplibregl-canvas:focus-visible { outline: 2px solid #6b6ae6; outline-offset: -3px; }

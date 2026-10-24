@@ -28,7 +28,7 @@ No invented building footprints were added. Geometry comes from the saved OSM re
 
 ## Verification evidence
 
-- `npm test`: **41 tests passed across 4 files**. Coverage includes conservation, downstream storage, signal clearance, minimum green, fixed-clock behavior, weather normalization, deterministic demand, route-adoption thresholds, both emergency regressions, blocked-route diversion, geometry validity/rotation/queue dimensions and inspector edge states.
+- `npm test`: **51 tests passed across 6 source test files**. Coverage includes conservation, downstream storage, signal clearance, minimum green, fixed-clock behavior, weather normalization, deterministic demand, route-adoption thresholds, both emergency regressions, blocked-route diversion, geometry validity/rotation/queue dimensions and inspector edge states.
 - `npm run lint`: passed.
 - `npm run build`: TypeScript and Vite production build passed. Vite retains a large-chunk advisory; main JavaScript is about 1.95 MB, about 534 kB gzip, with the local MapLibre worker about 519 kB. This remains a loading/performance improvement opportunity, especially on low-end devices.
 - `npm run benchmark`: all five scenarios at seed 42, 1,200 ticks each, two policies. Every tick passed vehicle-conservation and road-storage checks. All requested vehicles completed within the horizon in these runs.
@@ -63,3 +63,7 @@ The dashboard-structure endpoint requires a supplied multi-step fixture, which t
 The present engine uses one logical lane and one common 7.5 m storage slot per class. Compact buses are deliberately shorter than full-size real buses. There is no lane changing, overtaking, calibrated vehicle dynamics or pedestrian/cyclist crossing model. Bus priority, city-scale coordination and authenticated emergency green corridors are proposed capabilities, not completed field integrations.
 
 Before a pilot: survey and calibrate actual turns, lanes, phases and demand; integrate approved sensors with data-quality checks; train/evaluate the proposed MARL policy offline against strong baselines; add independent controller safety limits and outage fallback; run shadow mode and hardware validation with the authority. The full plan is in [REAL_WORLD_ROADMAP.md](REAL_WORLD_ROADMAP.md), and the completed narrative is in [PITCH.md](PITCH.md).
+
+## Map optimization follow-up
+
+The subsequent interaction pass moves traffic advancement into a local worker, removes per-frame dashboard camera updates, restores the large Central Park flag and makes the same navigation button switch both ways between 2D and 3D. Local Intel UHD profiling improved paused pan/zoom from 13.95 to 60.43 FPS and pan/zoom with 20x traffic from 10.34 to 38.53 FPS. The repaired map controls have 44px tap areas and passed focused spacing measurement at 390, 1440 and 1728px. See [MAP_PERFORMANCE.md](MAP_PERFORMANCE.md) for method, tradeoffs and lifecycle details.
