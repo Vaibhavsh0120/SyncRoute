@@ -1,5 +1,6 @@
 # SyncRoute final project review
 
+Current interface names: **Adaptive** is the default baseline (`fixed` engine key); **Dynamic** is the congestion-reducing controller (`optimized` key). Technical references to fixed/adaptive algorithms describe their behavior rather than the product names.
 Reviewed on 24 October 2026. Scope: application code, simulation and routing, playback lifecycle, map assets and generation, 3D/2D rendering, dashboard interactions, exports, dependency audit, documentation and the proposed real-world architecture.
 
 ## Result

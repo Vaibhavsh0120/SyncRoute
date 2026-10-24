@@ -1,6 +1,6 @@
 # SyncRoute
 
-Preventive traffic management for a simulated Connaught Place, New Delhi. Explore one large angled 3D city and a simultaneous 2D overview. Switch between **Normal mode** (fixed signals and routes) and **Optimized mode** (adaptive signals, preventive routing and ambulance priority). Both worlds receive the same demand, events and simulation time.
+Preventive traffic management for a simulated Connaught Place, New Delhi. Explore one large angled 3D city and a simultaneous 2D overview. Switch between **Adaptive mode** (baseline fixed signals and routes) and **Dynamic mode** (responsive signals, preventive routing and ambulance priority). Both worlds receive the same demand, events and simulation time. Adaptive is selected when the app opens. Internal replay/export keys remain `fixed` for Adaptive and `optimized` for Dynamic; exported reports include this label mapping.
 
 ## Open in your browser
 
@@ -28,11 +28,11 @@ Open the preview URL printed by Vite, normally http://localhost:4173. Do not ope
 1. Select **Peak corridor rush**, seed **42**, and start at **10×** or **20×**.
 2. Show the 3D city and 2D overview together. Cars follow simulated road paths and signals. The miniature map represents the same selected world.
 3. Explain **green** (free flow), **yellow** (emerging congestion, act early), and **red** (established congestion). Select a hexagon to inspect vehicle counts, speed and its transparent 30-second trend projection.
-4. Use the corner switch to compare Normal and Optimized. Both continue in the background on the same clock; switching does not replay different traffic.
+4. Use the corner switch to compare Adaptive and Dynamic. Both continue in the background on the same clock; switching does not replay different traffic.
 5. Show the decision log: which signals change, which drivers reroute, and why. Select **Road incident** for a north-radial bottleneck during minutes 3–7, or **Emergency response** for an ambulance entering at minute 3.
 6. Read total waiting, completed/requested trips and unfinished vehicles together. Export JSON and reset the same seed to reproduce the run.
 
-Scenario and seed changes reset both worlds and pause playback. Route endpoint changes preview routes without changing benchmark demand. Each run has 10 minutes of arrivals plus 10 minutes of drainage. Any unfinished vehicles at the cutoff remain in the metrics. Balanced traffic is a demand preset; Normal mode is the fixed control strategy.
+Scenario and seed changes reset both worlds and pause playback. Route endpoint changes preview routes without changing benchmark demand. Each run has 10 minutes of arrivals plus 10 minutes of drainage. Any unfinished vehicles at the cutoff remain in the metrics. Balanced traffic is a demand preset; Adaptive mode is the baseline fixed control strategy.
 
 ## Verification
 
@@ -49,7 +49,7 @@ The benchmark runs all five scenarios (full city, balanced, rush, incident and a
 
 - One logical lane per directed road; no overtaking or lane changes. Minimum spacing 7.5m, normal discharge headway 2s, finite storage and upstream spillback.
 - One-second engine ticks independent of playback speed. H3 statistics use current engine snapshots; vehicles interpolate between snapshots.
-- Normal signals use seeded 20–40s green durations with seeded starting phases and offsets. Both strategies use 2s amber and 1s all-red. Adaptive greens have a 10s minimum and a 40s cap with competing feasible demand.
+- Baseline signals use seeded 20–40s green durations with seeded starting phases and offsets. Both strategies use 2s amber and 1s all-red. Adaptive greens have a 10s minimum and a 40s cap with competing feasible demand.
 - Yellow forecasts use recent simulated occupancy trends, not a trained prediction model. Yellow cells propagate preventive pressure and route costs to active roads before established congestion.
 - The same immutable demand manifest and incidents feed both worlds. Fifty percent of cars are preassigned routing adoption. Diversions occur only at junctions, with a cooldown and minimum estimated savings.
 - Vehicle counts remain conserved: vehicles waiting outside + vehicles on roads + completed vehicles equals requested arrivals. No blocked arrival disappears.

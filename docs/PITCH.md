@@ -1,5 +1,6 @@
 # SyncRoute: traffic signals that work together
 
+Current interface names: **Adaptive** is the default baseline (`fixed` engine key); **Dynamic** is the congestion-reducing controller (`optimized` key). Technical references to fixed/adaptive algorithms describe their behavior rather than the product names.
 Research checked on 24 October 2026. The project is currently a browser simulation; the learning system and field deployment described below are proposed next stages.
 
 ## A pitch to present

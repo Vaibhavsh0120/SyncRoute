@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ComparisonSnapshot, Scenario, ScenarioId } from '../domain/types'
 import { createComparison, createScenario, snapshotComparison } from '../simulation'
 import { advanceClock } from '../lib/playback'
+import { CONTROL_LABELS } from '../lib/controlModes'
 import { SimulationWorkerQueue, type PreviousSnapshots, type SimulationWorkerResponse } from '../simulation/workerProtocol'
 
 export interface SimulationMotion { interpolation: number; playing: boolean; speed: number }
@@ -178,6 +179,7 @@ export function useSimulation() {
       project: 'SyncRoute',
       location: 'Connaught Place, New Delhi',
       dataMode: 'simulation',
+      controlModeLabels: CONTROL_LABELS,
       assumptions: {
         tickSeconds: 1, vehicleSpacingMetres: 7.5, laneCountPerDirectedLink: 1,
         normalDischargeHeadwaySeconds: 2, h3Resolution: 10, forecastHorizonSeconds: 30,

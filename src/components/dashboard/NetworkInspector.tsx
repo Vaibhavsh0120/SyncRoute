@@ -2,6 +2,7 @@ import { Location } from '@carbon/icons-react'
 import { NETWORK } from '../../data/network'
 import type { Selection, SimulationSnapshot } from '../../domain/types'
 import { number } from './format'
+import { CONTROL_LABELS } from '../../lib/controlModes'
 
 export function NetworkInspector({ selection, snapshot, onClear }: {
   selection: Selection | null
@@ -18,7 +19,7 @@ export function NetworkInspector({ selection, snapshot, onClear }: {
 
   return <section className="rail-section inspector" aria-label="Network inspector">
     <div className="rail-heading"><h2>{selection ? 'Network inspector' : 'Look closer'}</h2><Location size={16} /></div>
-    {selection && <p className="inspector-strategy">{selection.mode === 'fixed' ? 'Fixed control' : 'Adaptive control'}</p>}
+    {selection && <p className="inspector-strategy">{CONTROL_LABELS[selection.mode]} control</p>}
     {hex ? <>
       <div className={`inspector-category ${hex.category}`}><i className={`legend-hex ${hex.category === 'green' ? 'free' : hex.category === 'yellow' ? 'risk' : 'congested'}`} />{hex.category === 'green' ? 'Free flow' : hex.category === 'yellow' ? 'Congestion risk' : 'Congested'}</div>
       <p className="inspector-reason">{hex.reason}</p>

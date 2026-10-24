@@ -1,5 +1,6 @@
 # From the SyncRoute simulation to an evaluated corridor pilot
 
+Current interface names: **Adaptive** is the default baseline (`fixed` engine key); **Dynamic** is the congestion-reducing controller (`optimized` key). Technical references to fixed/adaptive algorithms describe their behavior rather than the product names.
 This is a proposed engineering and research plan, checked against the repository on 24 October 2026. It does not describe a deployed traffic controller or a completed training run.
 
 ## What exists today

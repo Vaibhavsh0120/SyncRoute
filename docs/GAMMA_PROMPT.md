@@ -1,5 +1,7 @@
 Create a professional project-pitch presentation about SyncRoute for technical and nontechnical evaluators. Choose the slide count, storyline, grouping, layouts and visual style yourself. Do not follow a fixed slide-by-slide template. Use the information below as the factual project brief, with concise writing and useful diagrams instead of dense paragraphs.
 
+The interface calls the default baseline mode Adaptive and the congestion-reducing mode Dynamic. The Adaptive baseline currently uses fixed-timing signals; Dynamic uses responsive signal and routing rules. Distinguish these product names from the technical term adaptive control.
+
 SyncRoute is a preventive traffic-management project for Indian cities. Its aim is to coordinate nearby intersections and route guidance before local queues spread into wider congestion. The current working prototype models Connaught Place, New Delhi.
 
 The problem: fixed-time signals cannot respond well to uneven demand, festival surges such as Diwali, rain, incidents or emergency vehicles. A junction can release its queue into a road that is already full, moving the problem downstream. This wastes commuters' time, makes bus arrivals unreliable and delays emergency response. Better signal coordination helps, but cannot create unlimited road capacity or replace public transport and good urban planning.

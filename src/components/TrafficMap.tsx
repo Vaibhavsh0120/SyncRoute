@@ -13,6 +13,7 @@ import type { VehicleProperties } from './vehicleGeometry'
 import { vehicleDetail, vehicleFrameDue } from '../lib/mapRendering'
 import type { VehicleDetail } from '../lib/mapRendering'
 import { MapNavigationControl } from './MapNavigationControl'
+import { CONTROL_LABELS } from '../lib/controlModes'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import './TrafficMap.css'
 
@@ -563,7 +564,7 @@ export function TrafficMap(props: TrafficMapProps) {
   }, [props.camera, props.viewMode, ready])
 
   return <div className={`traffic-map traffic-map--${props.viewMode} ${props.className ?? ''}`}>
-    <div ref={container} className="traffic-map-canvas" inert={!!error} aria-label={`${props.snapshot.mode === 'fixed' ? 'Fixed signal' : 'Optimized'} Connaught Place traffic map`} />
+    <div ref={container} className="traffic-map-canvas" inert={!!error} aria-label={`${CONTROL_LABELS[props.snapshot.mode]} Connaught Place traffic map`} />
     {!ready && !error && <div className="traffic-map-loading" role="status">Loading local Connaught Place map…</div>}
     {error && <div className="traffic-map-fallback"><div className="traffic-map-recovery"><p role="status">{error}</p><button type="button" onClick={() => { setReady(false); setError(null); setRetryKey(key => key + 1) }}>Retry interactive map</button></div><FallbackNetwork {...props} /></div>}
     {ready && !error && props.viewMode === '3d' && <button className="traffic-map-reset" type="button" title="Reset map view" aria-label="Reset map view" onClick={() => {
